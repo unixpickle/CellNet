@@ -1,13 +1,17 @@
 import HCBacktrace
 import Honeycrisp
 
-public struct NetworkState {
+public struct NetworkState: Sendable {
   public let activations: Tensor
-  public let states: Tensor
+  public let cellStates: Tensor
 
-  public init(activations: Tensor, states: Tensor) {
+  public init(activations: Tensor, cellStates: Tensor) {
     self.activations = activations
-    self.states = states
+    self.cellStates = cellStates
+  }
+
+  public func with(activations: Tensor) -> NetworkState {
+    NetworkState(activations: activations, cellStates: cellStates)
   }
 }
 
@@ -29,7 +33,7 @@ public class Cell: Trainable {
   }
 
   @recordCaller private func _callAsFunction(_ s: NetworkState) -> NetworkState {
-    var h = Tensor(concat: [s.activations, s.states], axis: -1)
+    var h = Tensor(concat: [s.activations, s.cellStates], axis: -1)
     h = self.layer1(h)
     h = h.gelu()
     h = self.layer2(h)
@@ -41,7 +45,7 @@ public class Cell: Trainable {
     let newActs = h[FullRange(count: h.shape.count - 1), (stateCount * 2)...]
     return NetworkState(
       activations: newActs,
-      states: stateMask.sigmoid() * s.states + (-stateMask).sigmoid() * stateUpdate
+      cellStates: stateMask.sigmoid() * s.cellStates + (-stateMask).sigmoid() * stateUpdate
     )
   }
 }
