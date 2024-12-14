@@ -1,0 +1,60 @@
+{
+  "originHash" : "334104a95a6dff916589870ba2ef0140321ada668885e549427410d401521fa3",
+  "pins" : [
+    {
+      "identity" : "coreml-builder",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/unixpickle/coreml-builder.git",
+      "state" : {
+        "revision" : "7cc44ecbe6a7271d897f72593bf053fe9f2e6fb3",
+        "version" : "0.2.1"
+      }
+    },
+    {
+      "identity" : "gzipswift",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/1024jp/GzipSwift",
+      "state" : {
+        "revision" : "731037f6cc2be2ec01562f6597c1d0aa3fe6fd05",
+        "version" : "6.0.1"
+      }
+    },
+    {
+      "identity" : "honeycrisp",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/unixpickle/honeycrisp",
+      "state" : {
+        "revision" : "5707a172aed970c4b6a48946a2b24791dee5696e",
+        "version" : "0.0.16"
+      }
+    },
+    {
+      "identity" : "swift-argument-parser",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/apple/swift-argument-parser",
+      "state" : {
+        "revision" : "41982a3656a71c768319979febd796c6fd111d5c",
+        "version" : "1.5.0"
+      }
+    },
+    {
+      "identity" : "swift-protobuf",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/apple/swift-protobuf",
+      "state" : {
+        "revision" : "ebc7251dd5b37f627c93698e4374084d98409633",
+        "version" : "1.28.2"
+      }
+    },
+    {
+      "identity" : "swift-syntax",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/swiftlang/swift-syntax.git",
+      "state" : {
+        "revision" : "0687f71944021d616d34d922343dcef086855920",
+        "version" : "600.0.1"
+      }
+    }
+  ],
+  "version" : 3
+}
