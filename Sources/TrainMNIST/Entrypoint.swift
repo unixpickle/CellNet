@@ -48,7 +48,11 @@ import MNIST
           allInputs.append(inputs)
           allLabelIndices.append(labels)
           allLabels.append(
-            Tensor(ones: [labels.shape[0], 1]).scatter(axis: 1, count: 10, indices: labels)
+            Tensor(ones: [labels.shape[0], 1]).scatter(
+              axis: 1,
+              count: 10,
+              indices: labels[..., NewAxis()]
+            )
           )
         }
 
