@@ -53,7 +53,10 @@ public struct Rollout {
     for (i, (input, target)) in zip(inputs, targets).enumerated() {
       for step in 0..<inferSteps {
         state = state.with(
-          activations: graph.populateInputs(activations: state.activations, inputs: input)
+          activations: graph.populateTargets(
+            activations: graph.populateInputs(activations: state.activations, inputs: input),
+            targets: Tensor(zerosLike: target)
+          )
         )
         state = checkpointedCell(state)
         if step + 1 == inferSteps {
