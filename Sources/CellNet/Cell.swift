@@ -35,10 +35,13 @@ public class Cell: Trainable {
   }
 
   @recordCaller private func _callAsFunction(_ s: NetworkState) -> NetworkState {
-    var h = Tensor(concat: [s.activations, s.cellStates], axis: -1)
-    h = h / h.pow(2).mean(axis: -1, keepdims: true).clamp(min: 1e-5).sqrt()
-    let featureSize = edgeCount + stateCount
-    h = h.reshape(h.shape[..<(h.shape.count - 1)] + [h.shape.last! / featureSize, featureSize])
+    var h = Tensor(
+      concat: [
+        addInnerDimension(s.activations, size: edgeCount),
+        addInnerDimension(s.cellStates, size: stateCount),
+      ],
+      axis: -1
+    )
     h = self.layer1(h)
     h = h.gelu()
     h = self.layer2(h)
@@ -56,4 +59,8 @@ public class Cell: Trainable {
       cellStates: stateMask.sigmoid() * s.cellStates + (-stateMask).sigmoid() * stateUpdate
     )
   }
+}
+
+func addInnerDimension(_ t: Tensor, size: Int) -> Tensor {
+  t.reshape(t.shape[..<(t.shape.count - 1)] + [t.shape.last! / size, size])
 }
