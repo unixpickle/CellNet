@@ -5,17 +5,12 @@ import PackageDescription
 
 let package = Package(
   name: "SynthClone",
-  platforms: [
-    .macOS(.v13)
-  ],
-  products: [
-    .library(
-      name: "CellNet",
-      targets: ["CellNet"])
-  ],
+  platforms: [.macOS(.v13)],
+  products: [.library(name: "CellNet", targets: ["CellNet"])],
   dependencies: [
     .package(url: "https://github.com/unixpickle/honeycrisp", from: "0.0.16"),
     .package(url: "https://github.com/apple/swift-argument-parser", from: "1.3.0"),
+    .package(url: "https://github.com/unixpickle/honeycrisp-examples.git", from: "0.0.2"),
   ],
   targets: [
     .target(
@@ -28,8 +23,8 @@ let package = Package(
     .executableTarget(
       name: "TrainMNIST",
       dependencies: [
-        "CellNet",
-        .product(name: "ArgumentParser", package: "swift-argument-parser"),
+        "CellNet", .product(name: "ArgumentParser", package: "swift-argument-parser"),
+        .product(name: "MNIST", package: "honeycrisp-examples"),
         .product(name: "Honeycrisp", package: "honeycrisp"),
       ]
     ),

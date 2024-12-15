@@ -29,20 +29,25 @@ public class Cell: Trainable {
     super.init()
     self.layer1 = Linear(inCount: edgeCount + stateCount, outCount: hiddenSize)
     self.layer2 = Linear(inCount: hiddenSize, outCount: hiddenSize)
-    self.layer2 = Linear(inCount: hiddenSize, outCount: stateCount * 2 + edgeCount)
+    self.layer3 = Linear(inCount: hiddenSize, outCount: stateCount * 2 + edgeCount)
   }
 
   @recordCaller private func _callAsFunction(_ s: NetworkState) -> NetworkState {
     var h = Tensor(concat: [s.activations, s.cellStates], axis: -1)
+    let featureSize = edgeCount + stateCount
+    h = h.reshape(h.shape[..<(h.shape.count - 1)] + [h.shape.last! / featureSize, featureSize])
     h = self.layer1(h)
     h = h.gelu()
     h = self.layer2(h)
     h = h.gelu()
     h = self.layer3(h)
 
-    let stateMask = h[FullRange(count: h.shape.count - 1), 0..<stateCount]
-    let stateUpdate = h[FullRange(count: h.shape.count - 1), stateCount..<(stateCount * 2)]
-    let newActs = h[FullRange(count: h.shape.count - 1), (stateCount * 2)...]
+    let stateMask = h[FullRange(count: h.shape.count - 1), 0..<stateCount].flatten(startAxis: -2)
+    let stateUpdate = h[FullRange(count: h.shape.count - 1), stateCount..<(stateCount * 2)].flatten(
+      startAxis: -2
+    )
+    let newActs = h[FullRange(count: h.shape.count - 1), (stateCount * 2)...].flatten(startAxis: -2)
+
     return NetworkState(
       activations: newActs,
       cellStates: stateMask.sigmoid() * s.cellStates + (-stateMask).sigmoid() * stateUpdate

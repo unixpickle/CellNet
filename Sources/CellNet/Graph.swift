@@ -2,16 +2,17 @@ import HCBacktrace
 import Honeycrisp
 
 public struct Graph {
+  public let batchSize: Int
   public let cellCount: Int
   public let actPerCell: Int
 
-  /// A permutation of shape [actCount].
+  /// A permutation of shape [batchSize, actCount].
   public let graphPerm: Tensor
 
-  /// Indices of shape [inCount] with integer elements in [0, actCount).
+  /// Indices of shape [batchSize, inCount] with integer elements in [0, actCount).
   public let inputIndices: Tensor
 
-  /// Indices of shape [outCount] with integer elements in [0, actCount).
+  /// Indices of shape [batchSize, outCount] with integer elements in [0, actCount).
   public let targetIndices: Tensor
 
   public var actCount: Int { cellCount * actPerCell }
@@ -19,12 +20,14 @@ public struct Graph {
   public var outCount: Int { targetIndices.shape[0] }
 
   public init(
+    batchSize: Int,
     cellCount: Int,
     actPerCell: Int,
     graphPerm: Tensor,
     inputIndices: Tensor,
     targetIndices: Tensor
   ) {
+    self.batchSize = batchSize
     self.cellCount = cellCount
     self.actPerCell = actPerCell
     self.graphPerm = graphPerm
@@ -33,6 +36,7 @@ public struct Graph {
   }
 
   @recordCaller private static func _random(
+    batchSize: Int,
     cellCount: Int,
     actPerCell: Int,
     inCount: Int,
@@ -47,29 +51,39 @@ public struct Graph {
       "must have at least two activations per cell: one for inputs, one for targets"
     )
 
-    var graphPerm = [Int](repeating: 0, count: cellCount * actPerCell)
-    for i in 0..<actPerCell {
-      var permForTerminal = Array(0..<cellCount)
-      permForTerminal.shuffle()
-      for (j, k) in permForTerminal.enumerated() {
-        graphPerm[j * actPerCell + i] = k * actPerCell + i
+    var allGraphPerm = [Tensor]()
+    var allInputIndices = [Tensor]()
+    var allTargetIndices = [Tensor]()
+
+    for _ in 0..<batchSize {
+      var graphPerm = [Int](repeating: 0, count: cellCount * actPerCell)
+      for i in 0..<actPerCell {
+        var permForTerminal = Array(0..<cellCount)
+        permForTerminal.shuffle()
+        for (j, k) in permForTerminal.enumerated() {
+          graphPerm[j * actPerCell + i] = k * actPerCell + i
+        }
       }
-    }
-    let inputIndices = Array(stride(from: 0, to: inCount * actPerCell, by: actPerCell))
-    let targetIndices = Array(
-      stride(
-        from: inCount * actPerCell + 1,
-        to: (inCount + outCount) * actPerCell + 1,
-        by: actPerCell
+      let inputIndices = Array(stride(from: 0, to: inCount * actPerCell, by: actPerCell))
+      let targetIndices = Array(
+        stride(
+          from: inCount * actPerCell + 1,
+          to: (inCount + outCount) * actPerCell + 1,
+          by: actPerCell
+        )
       )
-    )
+      allGraphPerm.append(Tensor(data: graphPerm, dtype: .int64))
+      allInputIndices.append(Tensor(data: inputIndices, dtype: .int64))
+      allTargetIndices.append(Tensor(data: targetIndices, dtype: .int64))
+    }
 
     return Graph(
+      batchSize: batchSize,
       cellCount: cellCount,
       actPerCell: actPerCell,
-      graphPerm: Tensor(data: graphPerm, dtype: .int64),
-      inputIndices: Tensor(data: inputIndices, dtype: .int64),
-      targetIndices: Tensor(data: targetIndices, dtype: .int64)
+      graphPerm: Tensor(stack: allGraphPerm),
+      inputIndices: Tensor(stack: allInputIndices),
+      targetIndices: Tensor(stack: allTargetIndices)
     )
   }
 
@@ -77,13 +91,13 @@ public struct Graph {
   ///
   /// This should be done before outputsToInputs().
   public func gatherOutputs(activations: Tensor) -> Tensor {
-    activations.gather(axis: -1, indices: targetIndices)
+    activations.gather(axis: 1, indices: targetIndices)
   }
 
   /// Take outputs from the last step and turn them into inputs
   /// for the next step.
   public func outputsToInputs(activations: Tensor) -> Tensor {
-    return activations.gather(axis: -1, indices: graphPerm)
+    return activations.gather(axis: 1, indices: graphPerm)
   }
 
   /// Replace some of the activations with inputs.
@@ -91,11 +105,11 @@ public struct Graph {
   /// This should be done after outputsToInputs().
   public func populateInputs(activations: Tensor, inputs: Tensor) -> Tensor {
     let mask = Tensor(onesLike: inputs).cast(.bool).scatter(
-      axis: -1,
+      axis: 1,
       count: actCount,
       indices: inputIndices
     )
-    let scattered = inputs.scatter(axis: -1, count: actCount, indices: inputIndices)
+    let scattered = inputs.scatter(axis: 1, count: actCount, indices: inputIndices)
     return mask.when(isTrue: scattered, isFalse: activations)
   }
 
@@ -104,11 +118,11 @@ public struct Graph {
   /// This should be done after outputsToInputs().
   public func populateTargets(activations: Tensor, targets: Tensor) -> Tensor {
     let mask = Tensor(onesLike: targets).cast(.bool).scatter(
-      axis: -1,
-      count: outCount,
+      axis: 1,
+      count: actCount,
       indices: targetIndices
     )
-    let scattered = targets.scatter(axis: -1, count: actCount, indices: inputIndices)
+    let scattered = targets.scatter(axis: 1, count: actCount, indices: targetIndices)
     return mask.when(isTrue: scattered, isFalse: activations)
   }
 }
