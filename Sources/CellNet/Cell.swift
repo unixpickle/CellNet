@@ -20,6 +20,7 @@ public class Cell: Trainable {
   public let stateCount: Int
 
   @Child public var layer1: Linear
+  @Child public var norm: LayerNorm
   @Child public var layer2: Linear
   @Child public var layer3: Linear
 
@@ -28,6 +29,7 @@ public class Cell: Trainable {
     self.stateCount = stateCount
     super.init()
     self.layer1 = Linear(inCount: edgeCount + stateCount, outCount: hiddenSize)
+    self.norm = LayerNorm(shape: [hiddenSize])
     self.layer2 = Linear(inCount: hiddenSize, outCount: hiddenSize)
     self.layer3 = Linear(inCount: hiddenSize, outCount: stateCount * 2 + edgeCount)
   }
@@ -37,6 +39,7 @@ public class Cell: Trainable {
     let featureSize = edgeCount + stateCount
     h = h.reshape(h.shape[..<(h.shape.count - 1)] + [h.shape.last! / featureSize, featureSize])
     h = self.layer1(h)
+    h = self.norm(h)
     h = h.gelu()
     h = self.layer2(h)
     h = h.gelu()
