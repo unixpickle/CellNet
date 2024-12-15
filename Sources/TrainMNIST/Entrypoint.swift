@@ -66,7 +66,7 @@ import MNIST
         )
 
         let losses = zip(allLabelIndices, rollouts.outputs).map { (labelIdxs, logits) in
-          logits.logSoftmax(axis: -1).gather(axis: 1, indices: labelIdxs).mean()
+          logits.logSoftmax(axis: -1).gather(axis: 1, indices: labelIdxs[..., NewAxis()]).mean()
         }
         let accs = zip(allLabelIndices, rollouts.outputs).map { (labelIdxs, logits) in
           (labelIdxs == logits.argmax(axis: 1)).cast(.float32).mean()
