@@ -1,7 +1,7 @@
 import HCBacktrace
 import Honeycrisp
 
-public struct Graph {
+public struct Graph: Sendable {
   public let batchSize: Int
   public let cellCount: Int
   public let actPerCell: Int
