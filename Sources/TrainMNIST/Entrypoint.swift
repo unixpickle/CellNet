@@ -69,11 +69,18 @@ import MNIST
         let meanAcc = Tensor(stack: accs).mean()
 
         meanLoss.backward()
+
+        var gradNorm = Tensor(zeros: [])
+        for (_, p) in cell.parameters { gradNorm = gradNorm + p.grad!.pow(2).sum() }
+
         opt.step()
         opt.clearGrads()
 
         step += 1
-        print("step \(step): loss=\(try await meanLoss.item()) acc=\(try await meanAcc.item())")
+        print(
+          "step \(step):" + " loss=\(try await meanLoss.item())"
+            + " acc=\(try await meanAcc.item())" + " grad_norm=\(try await gradNorm.sqrt().item())"
+        )
       }
     } catch { print("FATAL ERROR: \(error)") }
   }
