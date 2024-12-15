@@ -20,6 +20,8 @@ import MNIST
 
   static func main() async {
     do {
+      Backend.defaultBackend = try MPSBackend(allocator: .bucket)
+
       let cell = SyncTrainable(
         Cell(edgeCount: actPerCell, stateCount: stateCount, hiddenSize: hiddenSize)
       )
