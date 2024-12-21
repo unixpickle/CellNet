@@ -21,6 +21,13 @@ let package = Package(
       ]
     ),
     .executableTarget(
+      name: "TrainLogic",
+      dependencies: [
+        "CellNet", .product(name: "ArgumentParser", package: "swift-argument-parser"),
+        .product(name: "Honeycrisp", package: "honeycrisp"),
+      ]
+    ),
+    .executableTarget(
       name: "TrainMNIST",
       dependencies: [
         "CellNet", .product(name: "ArgumentParser", package: "swift-argument-parser"),

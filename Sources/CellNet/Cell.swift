@@ -20,7 +20,6 @@ public class Cell: Trainable {
   public let stateCount: Int
 
   @Child public var layer1: Linear
-  @Child public var norm: LayerNorm
   @Child public var layer2: Linear
   @Child public var layer3: Linear
 
