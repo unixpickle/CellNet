@@ -3,16 +3,16 @@ import Honeycrisp
 
 @main struct Main {
   // Dataset configuration
-  static let examplesPerRollout: Int = 20
-  static let inferSteps: Int = 5
-  static let updateSteps: Int = 5
+  static let examplesPerRollout: Int = 5
+  static let inferSteps: Int = 3
+  static let updateSteps: Int = 3
   static let batchSize: Int = 8
 
   // Model hyperparameters
-  static let stateCount: Int = 4
-  static let hiddenSize: Int = 32
+  static let stateCount: Int = 8
+  static let hiddenSize: Int = 64
   static let cellCount: Int = 16
-  static let actPerCell: Int = 4
+  static let actPerCell: Int = 8
 
   // Other hyperparams
   static let lr: Float = 0.001
@@ -33,7 +33,7 @@ import Honeycrisp
           batchSize: batchSize,
           cellCount: cellCount,
           actPerCell: actPerCell,
-          inCount: 2,
+          inCount: 4,
           outCount: 2
         )
         let allLabels = allLabelIndices.map { idxs in

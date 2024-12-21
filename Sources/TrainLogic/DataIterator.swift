@@ -23,10 +23,12 @@ struct DataIterator: Sequence, IteratorProtocol {
           default: fatalError()
           }
         inputData.append(Float(in1))
+        inputData.append(1 - Float(in1))
         inputData.append(Float(in2))
+        inputData.append(1 - Float(in2))
         outputLabels.append(out)
       }
-      allInputs.append(Tensor(data: inputData, shape: [batchSize, 2]))
+      allInputs.append(Tensor(data: inputData, shape: [batchSize, 4]))
       allLabels.append(Tensor(data: outputLabels, shape: [batchSize]))
     }
     return (allInputs, allLabels)
