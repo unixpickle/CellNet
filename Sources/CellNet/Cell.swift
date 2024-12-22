@@ -66,7 +66,11 @@ public class Cell: Trainable {
     h = h.gelu()
     h = self.layer3(h)
 
-    let stateMask = h[FullRange(count: h.shape.count - 1), 0..<stateCount].flatten(startAxis: -2)
+    let rememberBias = 4 * Tensor(data: (0..<stateCount), dtype: .float32) / stateCount - 2
+
+    let stateMask = (rememberBias + h[FullRange(count: h.shape.count - 1), 0..<stateCount]).flatten(
+      startAxis: -2
+    )
     let stateUpdate = h[FullRange(count: h.shape.count - 1), stateCount..<(stateCount * 2)].flatten(
       startAxis: -2
     )

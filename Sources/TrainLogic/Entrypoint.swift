@@ -9,8 +9,8 @@ import Honeycrisp
   static let batchSize: Int = 64
 
   // Model hyperparameters
-  static let stateCount: Int = 64
-  static let hiddenSize: Int = 128
+  static let stateCount: Int = 128
+  static let hiddenSize: Int = 64
   static let cellCount: Int = 6
   static let actPerCell: Int = 16
 
@@ -51,8 +51,7 @@ import Honeycrisp
           inputs: allInputs,
           targets: allLabels,
           cell: cell,
-          graph: graph,
-          resetActs: true
+          graph: graph
         )
 
         let losses = zip(allLabelIndices, rollouts.outputs).map { (labelIdxs, logits) in
