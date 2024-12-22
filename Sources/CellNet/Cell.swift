@@ -48,7 +48,6 @@ public class Cell: Trainable {
     self.inOutProj = Linear(inCount: 2, outCount: hiddenSize)
     self.layer2 = Linear(inCount: hiddenSize, outCount: hiddenSize)
     self.layer3 = Linear(inCount: hiddenSize, outCount: stateCount * 2 + edgeCount + 1)
-    self.layer3.bias = Tensor(randnLike: self.layer3.bias!) * 0.01
   }
 
   @recordCaller private func _callAsFunction(_ s: NetworkState) -> (
