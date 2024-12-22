@@ -4,15 +4,15 @@ import Honeycrisp
 @main struct Main {
   // Dataset configuration
   static let examplesPerRollout: Int = 5
-  static let inferSteps: Int = 3
-  static let updateSteps: Int = 3
-  static let batchSize: Int = 8
+  static let inferSteps: Int = 2
+  static let updateSteps: Int = 1
+  static let batchSize: Int = 128
 
   // Model hyperparameters
   static let stateCount: Int = 8
   static let hiddenSize: Int = 64
-  static let cellCount: Int = 16
-  static let actPerCell: Int = 8
+  static let cellCount: Int = 6
+  static let actPerCell: Int = 16
 
   // Other hyperparams
   static let lr: Float = 0.001
@@ -25,7 +25,11 @@ import Honeycrisp
         Cell(edgeCount: actPerCell, stateCount: stateCount, hiddenSize: hiddenSize)
       )
       let opt = Adam(cell.parameters, lr: lr)
-      let dataIt = DataIterator(batchSize: batchSize, exampleCount: examplesPerRollout)
+      let dataIt = DataIterator(
+        batchSize: batchSize,
+        exampleCount: examplesPerRollout,
+        allowedGates: [.xor]
+      )
 
       var step: Int = 0
       for (allInputs, allLabelIndices) in dataIt {
@@ -46,7 +50,8 @@ import Honeycrisp
           inputs: allInputs,
           targets: allLabels,
           cell: cell,
-          graph: graph
+          graph: graph,
+          resetActs: true
         )
 
         let losses = zip(allLabelIndices, rollouts.outputs).map { (labelIdxs, logits) in

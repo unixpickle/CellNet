@@ -5,7 +5,8 @@ enum LogicGate {
   case and
   case xor
 
-  static func random() -> LogicGate { [Self.or, Self.and, Self.xor].randomElement()! }
+  static func allGates() -> [LogicGate] { [Self.or, Self.and, Self.xor] }
+  static func xorOnly() -> [LogicGate] { [Self.xor] }
 
   func apply(_ x: Int, _ y: Int) -> Int {
     switch self {
@@ -19,12 +20,13 @@ enum LogicGate {
 struct DataIterator: Sequence, IteratorProtocol {
   let batchSize: Int
   let exampleCount: Int
+  let allowedGates: [LogicGate]
   var offset = 0
 
   mutating func next() -> ([Tensor], [Tensor])? {
     var allInputs = [Tensor]()
     var allLabels = [Tensor]()
-    let gates = (0..<batchSize).map { _ in LogicGate.random() }
+    let gates = (0..<batchSize).map { _ in allowedGates.randomElement()! }
     for _ in 0..<exampleCount {
       var inputData = [Float]()
       var outputLabels = [Int]()
