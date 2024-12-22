@@ -29,7 +29,8 @@ public struct Rollout {
     inputs: [Tensor],
     targets: [Tensor],
     cell: SyncTrainable<Cell>,
-    graph: Graph
+    graph: Graph,
+    resetActs: Bool = false
   ) -> Rollout {
     #alwaysAssert(inputs.count == targets.count)
     let batchShape = inputs[0].shape[..<(inputs[0].shape.count - 1)]
@@ -51,6 +52,9 @@ public struct Rollout {
 
     var outputs = [Tensor]()
     for (i, (input, target)) in zip(inputs, targets).enumerated() {
+      if i > 0 && resetActs {
+        state = state.with(activations: Tensor(zerosLike: state.activations))
+      }
       for step in 0..<inferSteps {
         state = state.with(
           activations: graph.populateTargets(
