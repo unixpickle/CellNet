@@ -5,34 +5,28 @@ public struct Graph: Sendable {
   public let batchSize: Int
   public let cellCount: Int
   public let actPerCell: Int
+  public let inCount: Int
+  public let outCount: Int
 
   /// A permutation of shape [batchSize, actCount].
   public let graphPerm: Tensor
 
-  /// Indices of shape [batchSize, inCount] with integer elements in [0, actCount).
-  public let inputIndices: Tensor
-
-  /// Indices of shape [batchSize, outCount] with integer elements in [0, actCount).
-  public let targetIndices: Tensor
-
   public var actCount: Int { cellCount * actPerCell }
-  public var inCount: Int { inputIndices.shape[0] }
-  public var outCount: Int { targetIndices.shape[0] }
 
   public init(
     batchSize: Int,
     cellCount: Int,
     actPerCell: Int,
     graphPerm: Tensor,
-    inputIndices: Tensor,
-    targetIndices: Tensor
+    inCount: Int,
+    outCount: Int
   ) {
     self.batchSize = batchSize
     self.cellCount = cellCount
     self.actPerCell = actPerCell
     self.graphPerm = graphPerm
-    self.inputIndices = inputIndices
-    self.targetIndices = targetIndices
+    self.inCount = inCount
+    self.outCount = outCount
   }
 
   @recordCaller private static func _random(
@@ -52,8 +46,6 @@ public struct Graph: Sendable {
     )
 
     var allGraphPerm = [Tensor]()
-    var allInputIndices = [Tensor]()
-    var allTargetIndices = [Tensor]()
 
     for _ in 0..<batchSize {
       var graphPerm = [Int](repeating: 0, count: cellCount * actPerCell)
@@ -64,17 +56,7 @@ public struct Graph: Sendable {
           graphPerm[j * actPerCell + i] = k * actPerCell + i
         }
       }
-      let inputIndices = Array(stride(from: 0, to: inCount * actPerCell, by: actPerCell))
-      let targetIndices = Array(
-        stride(
-          from: inCount * actPerCell + 1,
-          to: (inCount + outCount) * actPerCell + 1,
-          by: actPerCell
-        )
-      )
       allGraphPerm.append(Tensor(data: graphPerm, dtype: .int64))
-      allInputIndices.append(Tensor(data: inputIndices, dtype: .int64))
-      allTargetIndices.append(Tensor(data: targetIndices, dtype: .int64))
     }
 
     return Graph(
@@ -82,47 +64,38 @@ public struct Graph: Sendable {
       cellCount: cellCount,
       actPerCell: actPerCell,
       graphPerm: Tensor(stack: allGraphPerm),
-      inputIndices: Tensor(stack: allInputIndices),
-      targetIndices: Tensor(stack: allTargetIndices)
+      inCount: inCount,
+      outCount: outCount
     )
   }
 
-  /// Gather the outputs from the activation tensor.
-  ///
-  /// This should be done before outputsToInputs().
-  public func gatherOutputs(activations: Tensor) -> Tensor {
-    activations.gather(axis: 1, indices: targetIndices)
+  /// Gather the used outputs from the outputs tensor.
+  public func gatherOutputs(outputs: Tensor) -> Tensor {
+    return outputs[..., inCount..<(inCount + outCount)]
   }
 
-  /// Take outputs from the last step and turn them into inputs
+  /// Take output activations from the last step and turn them into inputs
   /// for the next step.
-  public func outputsToInputs(activations: Tensor) -> Tensor {
+  public func stepOutToStepIn(activations: Tensor) -> Tensor {
     return activations.gather(axis: 1, indices: graphPerm)
   }
 
-  /// Replace some of the activations with inputs.
-  ///
-  /// This should be done after outputsToInputs().
-  public func populateInputs(activations: Tensor, inputs: Tensor) -> Tensor {
-    let mask = Tensor(onesLike: inputs).cast(.bool).scatter(
-      axis: 1,
-      count: actCount,
-      indices: inputIndices
+  /// Create an input tensor.
+  public func populateInputs(inputs: Tensor) -> Tensor {
+    return Tensor(
+      concat: [inputs, Tensor(zeros: [inputs.shape[0], cellCount - inCount])],
+      axis: -1
     )
-    let scattered = inputs.scatter(axis: 1, count: actCount, indices: inputIndices)
-    return mask.when(isTrue: scattered, isFalse: activations)
   }
 
-  /// Replace some of the activations with targets.
-  ///
-  /// This should be done after outputsToInputs().
-  public func populateTargets(activations: Tensor, targets: Tensor) -> Tensor {
-    let mask = Tensor(onesLike: targets).cast(.bool).scatter(
-      axis: 1,
-      count: actCount,
-      indices: targetIndices
+  /// Create a target tensor.
+  public func populateTargets(targets: Tensor) -> Tensor {
+    return Tensor(
+      concat: [
+        Tensor(zeros: [targets.shape[0], inCount]), targets,
+        Tensor(zeros: [targets.shape[0], cellCount - (inCount + outCount)]),
+      ],
+      axis: -1
     )
-    let scattered = targets.scatter(axis: 1, count: actCount, indices: targetIndices)
-    return mask.when(isTrue: scattered, isFalse: activations)
   }
 }

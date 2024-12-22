@@ -6,11 +6,11 @@ import Honeycrisp
   static let examplesPerRollout: Int = 5
   static let inferSteps: Int = 2
   static let updateSteps: Int = 1
-  static let batchSize: Int = 128
+  static let batchSize: Int = 64
 
   // Model hyperparameters
-  static let stateCount: Int = 8
-  static let hiddenSize: Int = 64
+  static let stateCount: Int = 64
+  static let hiddenSize: Int = 128
   static let cellCount: Int = 6
   static let actPerCell: Int = 16
 
@@ -37,11 +37,12 @@ import Honeycrisp
           batchSize: batchSize,
           cellCount: cellCount,
           actPerCell: actPerCell,
-          inCount: 4,
+          inCount: 2,
           outCount: 2
         )
         let allLabels = allLabelIndices.map { idxs in
           Tensor(ones: [idxs.shape[0], 1]).scatter(axis: 1, count: 2, indices: idxs[..., NewAxis()])
+            * 2 - 1
         }
 
         let rollouts = Rollout.rollout(

@@ -35,19 +35,26 @@ public struct Rollout {
     #alwaysAssert(inputs.count == targets.count)
     let batchShape = inputs[0].shape[..<(inputs[0].shape.count - 1)]
     var state = NetworkState(
+      inputs: Tensor(zeros: batchShape + [graph.cellCount]),
+      targets: Tensor(zeros: batchShape + [graph.cellCount]),
       activations: Tensor(zeros: batchShape + [graph.actCount]),
       cellStates: Tensor(
         zeros: batchShape + [graph.cellCount * cell.use { cell in cell.stateCount }]
       )
     )
 
-    func checkpointedCell(_ state: NetworkState) -> NetworkState {
-      let results = Tensor.checkpoint([state.activations, state.cellStates]) {
-        (xs: [Tensor]) -> [Tensor] in
-        let results = cell.use { cell in cell(NetworkState(activations: xs[0], cellStates: xs[1])) }
-        return [results.activations, results.cellStates]
+    func checkpointedCell(_ state: NetworkState) -> (outputs: Tensor, state: NetworkState) {
+      let results = Tensor.checkpoint([
+        state.inputs, state.targets, state.activations, state.cellStates,
+      ]) { (xs: [Tensor]) -> [Tensor] in
+        let results = cell.use { cell in
+          cell(NetworkState(inputs: xs[0], targets: xs[1], activations: xs[2], cellStates: xs[3]))
+        }
+        return [results.outputs, results.newActs, results.newCellStates]
       }
-      return NetworkState(activations: results[0], cellStates: results[1])
+      return (
+        outputs: results[0], state: state.with(activations: results[1], cellStates: results[2])
+      )
     }
 
     var outputs = [Tensor]()
@@ -55,31 +62,20 @@ public struct Rollout {
       if i > 0 && resetActs {
         state = state.with(activations: Tensor(zerosLike: state.activations))
       }
+      state = state.with(inputs: graph.populateInputs(inputs: input))
       for step in 0..<inferSteps {
-        state = state.with(
-          activations: graph.populateTargets(
-            activations: graph.populateInputs(activations: state.activations, inputs: input),
-            targets: Tensor(zerosLike: target)
-          )
-        )
-        state = checkpointedCell(state)
-        if step + 1 == inferSteps {
-          outputs.append(graph.gatherOutputs(activations: state.activations))
-        }
-        state = state.with(activations: graph.outputsToInputs(activations: state.activations))
+        let out = checkpointedCell(state)
+        state = out.state
+        if step + 1 == inferSteps { outputs.append(graph.gatherOutputs(outputs: out.outputs)) }
+        state = state.with(activations: graph.stepOutToStepIn(activations: state.activations))
       }
+      state = state.with(targets: graph.populateTargets(targets: target))
 
       if i + 1 == inputs.count { break }
 
       for _ in 0..<updateSteps {
-        state = state.with(
-          activations: graph.populateTargets(
-            activations: graph.populateInputs(activations: state.activations, inputs: input),
-            targets: target
-          )
-        )
-        state = checkpointedCell(state)
-        state = state.with(activations: graph.outputsToInputs(activations: state.activations))
+        state = checkpointedCell(state).state
+        state = state.with(activations: graph.stepOutToStepIn(activations: state.activations))
       }
     }
 
