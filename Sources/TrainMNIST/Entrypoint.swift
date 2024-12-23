@@ -52,7 +52,7 @@ import MNIST
               axis: 1,
               count: 10,
               indices: labels[..., NewAxis()]
-            )
+            ) * 2 - 1
           )
         }
 

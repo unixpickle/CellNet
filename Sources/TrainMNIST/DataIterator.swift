@@ -16,7 +16,7 @@ struct DataIterator: Sequence, IteratorProtocol {
       offset += 1
     }
     let probs = Tensor(data: inputData, shape: [batchSize, 28 * 28], dtype: .float32)
-    let pixels = (probs > Tensor(randLike: probs)).cast(.float32)
+    let pixels = (probs > Tensor(randLike: probs)).cast(.float32) * 2 - 1
     return (pixels, Tensor(data: outputLabels, dtype: .int64))
   }
 }
