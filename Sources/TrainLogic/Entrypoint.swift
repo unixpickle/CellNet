@@ -28,7 +28,7 @@ import Honeycrisp
       let dataIt = DataIterator(
         batchSize: batchSize,
         exampleCount: examplesPerRollout,
-        allowedGates: [.xor]
+        allowedGates: LogicGate.allGates()
       )
 
       var step: Int = 0
