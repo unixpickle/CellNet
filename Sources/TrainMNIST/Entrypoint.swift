@@ -10,10 +10,10 @@ import MNIST
   static let batchSize: Int = 2
 
   // Model hyperparameters
-  static let stateCount: Int = 8
-  static let hiddenSize: Int = 32
+  static let stateCount: Int = 64
+  static let hiddenSize: Int = 64
   static let cellCount: Int = 1024
-  static let actPerCell: Int = 8
+  static let actPerCell: Int = 16
 
   // Other hyperparams
   static let lr: Float = 0.001
