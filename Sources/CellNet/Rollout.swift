@@ -37,6 +37,7 @@ public struct Rollout {
     var state = NetworkState(
       inputs: Tensor(zeros: batchShape + [graph.cellCount]),
       targets: Tensor(zeros: batchShape + [graph.cellCount]),
+      prevActivations: Tensor(zeros: batchShape + [graph.actCount]),
       activations: Tensor(zeros: batchShape + [graph.actCount]),
       cellStates: Tensor(
         zeros: batchShape + [graph.cellCount * cell.use { cell in cell.stateCount }]
@@ -45,22 +46,38 @@ public struct Rollout {
 
     func checkpointedCell(_ state: NetworkState) -> (outputs: Tensor, state: NetworkState) {
       let results = Tensor.checkpoint([
-        state.inputs, state.targets, state.activations, state.cellStates,
+        state.inputs, state.targets, state.prevActivations, state.activations, state.cellStates,
       ]) { (xs: [Tensor]) -> [Tensor] in
         let results = cell.use { cell in
-          cell(NetworkState(inputs: xs[0], targets: xs[1], activations: xs[2], cellStates: xs[3]))
+          cell(
+            NetworkState(
+              inputs: xs[0],
+              targets: xs[1],
+              prevActivations: xs[2],
+              activations: xs[3],
+              cellStates: xs[4]
+            )
+          )
         }
         return [results.outputs, results.newActs, results.newCellStates]
       }
       return (
-        outputs: results[0], state: state.with(activations: results[1], cellStates: results[2])
+        outputs: results[0],
+        state: state.with(
+          prevActivations: results[1],
+          activations: results[1],
+          cellStates: results[2]
+        )
       )
     }
 
     var outputs = [Tensor]()
     for (i, (input, target)) in zip(inputs, targets).enumerated() {
       if i > 0 && resetActs {
-        state = state.with(activations: Tensor(zerosLike: state.activations))
+        state = state.with(
+          prevActivations: Tensor(zerosLike: state.prevActivations),
+          activations: Tensor(zerosLike: state.activations)
+        )
       }
       state = state.with(inputs: graph.populateInputs(inputs: input))
       for step in 0..<inferSteps {

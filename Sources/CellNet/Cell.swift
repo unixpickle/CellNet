@@ -4,12 +4,20 @@ import Honeycrisp
 public struct NetworkState: Sendable {
   public let inputs: Tensor
   public let targets: Tensor
+  public let prevActivations: Tensor
   public let activations: Tensor
   public let cellStates: Tensor
 
-  public init(inputs: Tensor, targets: Tensor, activations: Tensor, cellStates: Tensor) {
+  public init(
+    inputs: Tensor,
+    targets: Tensor,
+    prevActivations: Tensor,
+    activations: Tensor,
+    cellStates: Tensor
+  ) {
     self.inputs = inputs
     self.targets = targets
+    self.prevActivations = prevActivations
     self.activations = activations
     self.cellStates = cellStates
   }
@@ -17,12 +25,14 @@ public struct NetworkState: Sendable {
   public func with(
     inputs: Tensor? = nil,
     targets: Tensor? = nil,
+    prevActivations: Tensor? = nil,
     activations: Tensor? = nil,
     cellStates: Tensor? = nil
   ) -> NetworkState {
     NetworkState(
       inputs: inputs ?? self.inputs,
       targets: targets ?? self.targets,
+      prevActivations: prevActivations ?? self.prevActivations,
       activations: activations ?? self.activations,
       cellStates: cellStates ?? self.cellStates
     )
@@ -35,6 +45,7 @@ public class Cell: Trainable {
 
   @Child public var stateProj: Linear
   @Child public var edgeProj: Linear
+  @Child public var prevEdgeProj: Linear
   @Child public var inOutProj: Linear
   @Child public var layer2: Linear
   @Child public var layer3: Linear
@@ -45,9 +56,10 @@ public class Cell: Trainable {
     super.init()
     self.stateProj = Linear(inCount: stateCount, outCount: hiddenSize)
     self.edgeProj = Linear(inCount: edgeCount, outCount: hiddenSize)
+    self.prevEdgeProj = Linear(inCount: edgeCount, outCount: hiddenSize)
     self.inOutProj = Linear(inCount: 2, outCount: hiddenSize)
     self.layer2 = Linear(inCount: hiddenSize, outCount: hiddenSize)
-    self.layer3 = Linear(inCount: hiddenSize, outCount: stateCount * 2 + edgeCount + 1)
+    self.layer3 = Linear(inCount: hiddenSize, outCount: stateCount * 2 + edgeCount * 2 + 1)
   }
 
   @recordCaller private func _callAsFunction(_ s: NetworkState) -> (
@@ -59,6 +71,7 @@ public class Cell: Trainable {
     )
     var h =
       stateProj(addInnerDimension(s.cellStates, size: stateCount))
+      + prevEdgeProj(addInnerDimension(s.prevActivations, size: edgeCount))
       + edgeProj(addInnerDimension(s.activations, size: edgeCount)) + inOutProj(inOut)
     h = h.gelu()
     h = self.layer2(h)
@@ -74,12 +87,16 @@ public class Cell: Trainable {
       startAxis: -2
     )
     let outputs = h[FullRange(count: h.shape.count - 1), (stateCount * 2)]
-    let newActs = h[FullRange(count: h.shape.count - 1), (stateCount * 2 + 1)...].flatten(
-      startAxis: -2
-    )
+    let actMask = h[
+      FullRange(count: h.shape.count - 1),
+      (stateCount * 2 + 1)..<(stateCount * 2 + edgeCount + 1)
+    ].flatten(startAxis: -2)
+    let actUpdate = h[FullRange(count: h.shape.count - 1), (stateCount * 2 + edgeCount + 1)...]
+      .flatten(startAxis: -2)
 
     return (
-      outputs: outputs, newActs: newActs,
+      outputs: outputs,
+      newActs: actMask.sigmoid() * s.prevActivations + (-actMask).sigmoid() * actUpdate,
       newCellStates: stateMask.sigmoid() * s.cellStates + (-stateMask).sigmoid() * stateUpdate
     )
   }
