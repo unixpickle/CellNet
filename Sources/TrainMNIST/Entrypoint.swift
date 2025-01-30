@@ -1,24 +1,39 @@
+import ArgumentParser
 import CellNet
+import Foundation
 import Honeycrisp
 import MNIST
 
-@main struct Main {
+@main struct Main: AsyncParsableCommand {
+  struct State: Codable {
+    let model: Trainable.State
+    let step: Int?
+    let data: DataIterator.State?
+    let opt: Adam.State?
+  }
+
   // Dataset configuration
-  static let examplesPerRollout: Int = 20
-  static let inferSteps: Int = 5
-  static let updateSteps: Int = 5
-  static let batchSize: Int = 2
+  @Option(name: .long, help: "Dataset examples per rollout.") var examplesPerRollout: Int = 100
+  @Option(name: .long, help: "Number of inference timesteps.") var inferSteps: Int = 5
+  @Option(name: .long, help: "Number of update timesteps.") var updateSteps: Int = 5
+  @Option(name: .shortAndLong, help: "Batch size.") var batchSize: Int = 2
 
   // Model hyperparameters
-  static let stateCount: Int = 64
-  static let hiddenSize: Int = 64
-  static let cellCount: Int = 1024
-  static let actPerCell: Int = 16
+  @Option(name: .long, help: "State count.") var stateCount: Int = 64
+  @Option(name: .long, help: "MLP hidden size.") var hiddenSize: Int = 64
+  @Option(name: .long, help: "Number of cells.") var cellCount: Int = 1024
+  @Option(name: .long, help: "Activations per cell.") var actPerCell: Int = 16
 
   // Other hyperparams
-  static let lr: Float = 0.001
+  @Option(name: .shortAndLong, help: "Learning rate.") var lr: Float = 0.001
 
-  static func main() async {
+  // Saving
+  @Option(name: .shortAndLong, help: "Output path.") var outputPath: String = "state.plist"
+  @Option(name: .long, help: "Save interval.") var saveInterval: Int = 100
+
+  mutating func run() async {
+    print("Command:", CommandLine.arguments.joined(separator: " "))
+
     do {
       Backend.defaultBackend = try MPSBackend(allocator: .bucket)
 
@@ -28,9 +43,21 @@ import MNIST
       let opt = Adam(cell.parameters, lr: lr)
 
       let dataset = try await MNISTDataset.download(toDir: "mnist_data")
-      var dataIt = DataIterator(images: dataset.train.shuffled(), batchSize: batchSize)
+      var dataIt = DataIterator(images: dataset.train, batchSize: batchSize)
 
       var step: Int = 0
+
+      if FileManager.default.fileExists(atPath: outputPath) {
+        print("loading from checkpoint: \(outputPath) ...")
+        let data = try Data(contentsOf: URL(fileURLWithPath: outputPath))
+        let decoder = PropertyListDecoder()
+        let state = try decoder.decode(State.self, from: data)
+        try cell.loadState(state.model)
+        if let optState = state.opt { try opt.loadState(optState) }
+        if let dataState = state.data { dataIt.state = dataState }
+        step = state.step ?? 0
+      }
+
       while true {
         let graph = Graph.random(
           batchSize: batchSize,
@@ -87,6 +114,18 @@ import MNIST
           "step \(step):" + " loss=\(try await meanLoss.item())"
             + " acc=\(try await meanAcc.item())" + " grad_norm=\(try await gradNorm.sqrt().item())"
         )
+
+        if step % saveInterval == 0 {
+          print("saving after \(step) steps...")
+          let state = State(
+            model: try await cell.state(),
+            step: step,
+            data: dataIt.state,
+            opt: try await opt.state()
+          )
+          let stateData = try PropertyListEncoder().encode(state)
+          try stateData.write(to: URL(filePath: outputPath), options: .atomic)
+        }
       }
     } catch { print("FATAL ERROR: \(error)") }
   }
