@@ -10,6 +10,7 @@ import MNIST
     let step: Int?
     let data: DataIterator.State?
     let opt: Adam.State?
+    let clipper: GradClipper.State?
   }
 
   // Dataset configuration
@@ -41,6 +42,7 @@ import MNIST
         Cell(edgeCount: actPerCell, stateCount: stateCount, hiddenSize: hiddenSize)
       )
       let opt = Adam(cell.parameters, lr: lr)
+      let clipper = GradClipper()
 
       let dataset = try await MNISTDataset.download(toDir: "mnist_data")
       var dataIt = DataIterator(images: dataset.train, batchSize: batchSize)
@@ -54,6 +56,7 @@ import MNIST
         let state = try decoder.decode(State.self, from: data)
         try cell.loadState(state.model)
         if let optState = state.opt { try opt.loadState(optState) }
+        if let clipperState = state.clipper { clipper.state = clipperState }
         if let dataState = state.data { dataIt.state = dataState }
         step = state.step ?? 0
       }
@@ -103,8 +106,7 @@ import MNIST
 
         meanLoss.backward()
 
-        var gradNorm = Tensor(zeros: [])
-        for (_, p) in cell.parameters { gradNorm = gradNorm + p.grad!.pow(2).sum() }
+        let (gradNorm, gradScale) = try await clipper.clipGrads(model: cell)
 
         opt.step()
         opt.clearGrads()
@@ -112,7 +114,7 @@ import MNIST
         step += 1
         print(
           "step \(step):" + " loss=\(try await meanLoss.item())"
-            + " acc=\(try await meanAcc.item())" + " grad_norm=\(try await gradNorm.sqrt().item())"
+            + " acc=\(try await meanAcc.item())" + " grad_norm=\(gradNorm) grad_scale=\(gradScale)"
         )
 
         if step % saveInterval == 0 {
@@ -121,7 +123,8 @@ import MNIST
             model: try await cell.state(),
             step: step,
             data: dataIt.state,
-            opt: try await opt.state()
+            opt: try await opt.state(),
+            clipper: clipper.state
           )
           let stateData = try PropertyListEncoder().encode(state)
           try stateData.write(to: URL(filePath: outputPath), options: .atomic)
