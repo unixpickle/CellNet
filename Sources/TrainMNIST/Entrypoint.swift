@@ -27,6 +27,10 @@ import MNIST
 
   // Other hyperparams
   @Option(name: .shortAndLong, help: "Learning rate.") var lr: Float = 0.001
+  @Option(name: .long, help: "Adam beta1.") var beta1: Float = 0.9
+  @Option(name: .long, help: "Adam beta2.") var beta2: Float = 0.999
+  @Option(name: .long, help: "Adam epsilon.") var eps: Float = 1e-8
+  @Option(name: .long, help: "AdamW weight decay.") var weightDecay: Float = 0.0
 
   // Saving
   @Option(name: .shortAndLong, help: "Output path.") var outputPath: String = "state.plist"
@@ -41,7 +45,14 @@ import MNIST
       let cell = SyncTrainable(
         Cell(edgeCount: actPerCell, stateCount: stateCount, hiddenSize: hiddenSize)
       )
-      let opt = Adam(cell.parameters, lr: lr)
+      let opt = Adam(
+        cell.parameters,
+        lr: lr,
+        beta1: beta1,
+        beta2: beta2,
+        eps: eps,
+        weightDecay: weightDecay
+      )
       let clipper = GradClipper()
 
       let dataset = try await MNISTDataset.download(toDir: "mnist_data")
