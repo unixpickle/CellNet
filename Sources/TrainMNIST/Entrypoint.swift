@@ -18,6 +18,7 @@ import MNIST
   @Option(name: .long, help: "Number of inference timesteps.") var inferSteps: Int = 5
   @Option(name: .long, help: "Number of update timesteps.") var updateSteps: Int = 5
   @Option(name: .shortAndLong, help: "Batch size.") var batchSize: Int = 2
+  @Option(name: .long, help: "Divide batches into microbatches.") var microbatch: Int? = nil
 
   // Model hyperparameters
   @Option(name: .long, help: "State count.") var stateCount: Int = 64
@@ -73,14 +74,6 @@ import MNIST
       }
 
       while true {
-        let graph = Graph.random(
-          batchSize: batchSize,
-          cellCount: cellCount,
-          actPerCell: actPerCell,
-          inCount: 28 * 28,
-          outCount: 10
-        )
-
         var allInputs = [Tensor]()
         var allLabelIndices = [Tensor]()
         var allLabels = [Tensor]()
@@ -97,25 +90,45 @@ import MNIST
           )
         }
 
-        let rollouts = Rollout.rollout(
-          inferSteps: inferSteps,
-          updateSteps: updateSteps,
-          inputs: allInputs,
-          targets: allLabels,
-          cell: cell,
-          graph: graph
-        )
+        var totalMeanLoss = Tensor(zeros: [])
+        var totalMeanAcc = Tensor(zeros: [])
+        let mbSize = microbatch ?? batchSize
 
-        let losses = zip(allLabelIndices, rollouts.outputs).map { (labelIdxs, logits) in
-          logits.logSoftmax(axis: -1).gather(axis: 1, indices: labelIdxs[..., NewAxis()]).mean()
-        }
-        let accs = zip(allLabelIndices, rollouts.outputs).map { (labelIdxs, logits) in
-          (labelIdxs == logits.argmax(axis: 1)).cast(.float32).mean()
-        }
-        let meanLoss = -Tensor(stack: losses).mean()
-        let meanAcc = Tensor(stack: accs).mean()
+        for i in stride(from: 0, to: batchSize, by: mbSize) {
+          let curMbSize = min(batchSize - i, mbSize)
+          let mbScale = Float(curMbSize) / Float(batchSize)
+          let graph = Graph.random(
+            batchSize: curMbSize,
+            cellCount: cellCount,
+            actPerCell: actPerCell,
+            inCount: 28 * 28,
+            outCount: 10
+          )
+          let rollouts = Rollout.rollout(
+            inferSteps: inferSteps,
+            updateSteps: updateSteps,
+            inputs: allInputs.map { $0[i..<(i + curMbSize)] },
+            targets: allLabels.map { $0[i..<(i + curMbSize)] },
+            cell: cell,
+            graph: graph
+          )
 
-        meanLoss.backward()
+          let subLabelIndices = allLabelIndices[i..<(i + curMbSize)]
+          let losses = zip(subLabelIndices, rollouts.outputs).map { (labelIdxs, logits) in
+            logits.logSoftmax(axis: -1).gather(axis: 1, indices: labelIdxs[..., NewAxis()]).mean()
+          }
+          let accs = zip(subLabelIndices, rollouts.outputs).map { (labelIdxs, logits) in
+            (labelIdxs == logits.argmax(axis: 1)).cast(.float32).mean()
+          }
+          let meanLoss = -Tensor(stack: losses).mean() * mbScale
+          let meanAcc = Tensor(stack: accs).mean() * mbScale
+
+          meanLoss.backward()
+          Tensor.withGrad(enabled: false) {
+            totalMeanLoss = totalMeanLoss + meanLoss
+            totalMeanAcc = totalMeanAcc + meanAcc
+          }
+        }
 
         let (gradNorm, gradScale) = try await clipper.clipGrads(model: cell)
 
@@ -124,8 +137,9 @@ import MNIST
 
         step += 1
         print(
-          "step \(step):" + " loss=\(try await meanLoss.item())"
-            + " acc=\(try await meanAcc.item())" + " grad_norm=\(gradNorm) grad_scale=\(gradScale)"
+          "step \(step):" + " loss=\(try await totalMeanLoss.item())"
+            + " acc=\(try await totalMeanAcc.item())" + " grad_norm=\(gradNorm)"
+            + " grad_scale=\(gradScale)"
         )
 
         if step % saveInterval == 0 {
