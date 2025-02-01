@@ -113,7 +113,7 @@ import MNIST
             graph: graph
           )
 
-          let subLabelIndices = allLabelIndices[i..<(i + curMbSize)]
+          let subLabelIndices = allLabelIndices.map { $0[i..<(i + curMbSize)] }
           let losses = zip(subLabelIndices, rollouts.outputs).map { (labelIdxs, logits) in
             logits.logSoftmax(axis: -1).gather(axis: 1, indices: labelIdxs[..., NewAxis()]).mean()
           }
@@ -124,6 +124,13 @@ import MNIST
           let meanAcc = Tensor(stack: accs).mean() * mbScale
 
           meanLoss.backward()
+
+          // Wait for backward computation before using memory
+          // for the next microbatch.
+          if i + curMbSize < batchSize {
+            for (_, p) in cell.parameters { if let g = p.grad { try await g.wait() } }
+          }
+
           Tensor.withGrad(enabled: false) {
             totalMeanLoss = totalMeanLoss + meanLoss
             totalMeanAcc = totalMeanAcc + meanAcc
