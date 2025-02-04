@@ -1,10 +1,13 @@
 import ArgumentParser
 import CellNet
 import Foundation
+import HCBacktrace
 import Honeycrisp
 import MNIST
 
 @main struct Main: AsyncParsableCommand {
+  typealias LossAndAcc = (loss: Tensor, acc: Tensor)
+
   struct State: Codable {
     let model: Trainable.State
     let step: Int?
@@ -32,6 +35,8 @@ import MNIST
   @Option(name: .long, help: "Adam beta2.") var beta2: Float = 0.999
   @Option(name: .long, help: "Adam epsilon.") var eps: Float = 1e-8
   @Option(name: .long, help: "AdamW weight decay.") var weightDecay: Float = 0.0
+  @Option(name: .long, help: "If specified, use Evolution Strategies with this epsilon.")
+  var esEpsilon: Float? = nil
 
   // Saving
   @Option(name: .shortAndLong, help: "Output path.") var outputPath: String = "state.plist"
@@ -104,33 +109,44 @@ import MNIST
             inCount: 28 * 28,
             outCount: 10
           )
-          let rollouts = Rollout.rollout(
-            inferSteps: inferSteps,
-            updateSteps: updateSteps,
-            inputs: allInputs.map { $0[i..<(i + curMbSize)] },
-            targets: allLabels.map { $0[i..<(i + curMbSize)] },
-            cell: cell,
-            graph: graph
-          )
 
-          let subLabelIndices = allLabelIndices.map { $0[i..<(i + curMbSize)] }
-          let losses = zip(subLabelIndices, rollouts.outputs).map { (labelIdxs, logits) in
-            logits.logSoftmax(axis: -1).gather(axis: 1, indices: labelIdxs[..., NewAxis()]).mean()
-          }
-          let accs = zip(subLabelIndices, rollouts.outputs).map { (labelIdxs, logits) in
-            (labelIdxs == logits.argmax(axis: 1)).cast(.float32).mean()
-          }
-          let meanLoss = -Tensor(stack: losses).mean() * mbScale
-          let meanAcc = Tensor(stack: accs).mean() * mbScale
+          func computeLosses() -> LossAndAcc {
+            let rollouts = Rollout.rollout(
+              inferSteps: inferSteps,
+              updateSteps: updateSteps,
+              inputs: allInputs.map { $0[i..<(i + curMbSize)] },
+              targets: allLabels.map { $0[i..<(i + curMbSize)] },
+              cell: cell,
+              graph: graph
+            )
 
-          meanLoss.backward()
-
-          // Wait for backward computation before using memory
-          // for the next microbatch.
-          if i + curMbSize < batchSize {
-            for (_, p) in cell.parameters { if let g = p.grad { try await g.wait() } }
+            let subLabelIndices = allLabelIndices.map { $0[i..<(i + curMbSize)] }
+            let losses = zip(subLabelIndices, rollouts.outputs).map { (labelIdxs, logits) in
+              logits.logSoftmax(axis: -1).gather(axis: 1, indices: labelIdxs[..., NewAxis()]).mean()
+            }
+            let accs = zip(subLabelIndices, rollouts.outputs).map { (labelIdxs, logits) in
+              (labelIdxs == logits.argmax(axis: 1)).cast(.float32).mean()
+            }
+            let meanLoss = -Tensor(stack: losses).mean() * mbScale
+            let meanAcc = Tensor(stack: accs).mean() * mbScale
+            return (loss: meanLoss, acc: meanAcc)
           }
 
+          let (meanLoss, meanAcc) =
+            if let esEpsilon = esEpsilon {
+              evolutionStrategies(model: cell, epsilon: esEpsilon, lossFn: computeLosses)
+            } else {
+              try await {
+                let (meanLoss, meanAcc) = computeLosses()
+                meanLoss.backward()
+                // Wait for backward computation before using memory
+                // for the next microbatch.
+                if i + curMbSize < batchSize {
+                  for (_, p) in cell.parameters { if let g = p.grad { try await g.wait() } }
+                }
+                return (loss: meanLoss, acc: meanAcc)
+              }()
+            }
           Tensor.withGrad(enabled: false) {
             totalMeanLoss = totalMeanLoss + meanLoss
             totalMeanAcc = totalMeanAcc + meanAcc
@@ -163,5 +179,38 @@ import MNIST
         }
       }
     } catch { print("FATAL ERROR: \(error)") }
+  }
+
+  @recordCaller private func _evolutionStrategies(
+    model: TrainableProto,
+    epsilon: Float,
+    lossFn: () -> LossAndAcc
+  ) -> LossAndAcc {
+    Tensor.withGrad(enabled: false) {
+      let noise: [Tensor?] = model.parameters.map {
+        if let data = $0.1.data { Tensor(randnLike: data) } else { nil }
+      }
+      let center: [Tensor?] = model.parameters.map { $0.1.data }
+
+      func assignWithScale(_ scale: Float) {
+        for ((_, var param), (center, noise)) in zip(model.parameters, zip(center, noise)) {
+          if let center = center, let noise = noise { param.data = center + noise * scale }
+        }
+      }
+      assignWithScale(-epsilon)
+      let (negLoss, negAcc) = lossFn()
+      assignWithScale(epsilon)
+      let (posLoss, posAcc) = lossFn()
+      assignWithScale(0.0)
+
+      for ((_, var param), noise) in zip(model.parameters, noise) {
+        if let noise = noise {
+          let g = noise * (posLoss - negLoss) / (2 * epsilon)
+          if let grad = param.grad { param.grad = grad + g } else { param.grad = g }
+        }
+      }
+
+      return (loss: (negLoss + posLoss) / 2, acc: (negAcc + posAcc) / 2)
+    }
   }
 }
