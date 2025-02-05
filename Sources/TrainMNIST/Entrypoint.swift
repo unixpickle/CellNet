@@ -29,14 +29,17 @@ import MNIST
   @Option(name: .long, help: "Number of cells.") var cellCount: Int = 1024
   @Option(name: .long, help: "Activations per cell.") var actPerCell: Int = 16
 
-  // Other hyperparams
+  // Adam hyperparams
   @Option(name: .shortAndLong, help: "Learning rate.") var lr: Float = 0.001
   @Option(name: .long, help: "Adam beta1.") var beta1: Float = 0.9
   @Option(name: .long, help: "Adam beta2.") var beta2: Float = 0.999
   @Option(name: .long, help: "Adam epsilon.") var eps: Float = 1e-8
   @Option(name: .long, help: "AdamW weight decay.") var weightDecay: Float = 0.0
+
+  // Evolutions strategies
   @Option(name: .long, help: "If specified, use Evolution Strategies with this epsilon.")
   var esEpsilon: Float? = nil
+  @Option(name: .long, help: "The ES population size.") var esPopulation: Int = 1
 
   // Saving
   @Option(name: .shortAndLong, help: "Output path.") var outputPath: String = "state.plist"
@@ -78,6 +81,11 @@ import MNIST
         step = state.step ?? 0
       }
 
+      let es: ES? =
+        if let eps = esEpsilon { ES(model: cell, eps: eps, directionCount: esPopulation) } else {
+          nil
+        }
+
       while true {
         var allInputs = [Tensor]()
         var allLabelIndices = [Tensor]()
@@ -98,6 +106,7 @@ import MNIST
         var totalMeanLoss = Tensor(zeros: [])
         var totalMeanAcc = Tensor(zeros: [])
         let mbSize = microbatch ?? batchSize
+        let esNoise = es?.sampleNoises()
 
         for i in stride(from: 0, to: batchSize, by: mbSize) {
           let curMbSize = min(batchSize - i, mbSize)
@@ -133,8 +142,14 @@ import MNIST
           }
 
           let (meanLoss, meanAcc) =
-            if let esEpsilon = esEpsilon {
-              evolutionStrategies(model: cell, epsilon: esEpsilon, lossFn: computeLosses)
+            if let es = es, let esNoise = esNoise {
+              {
+                let (loss, metrics) = es.forwardBackward(noises: esNoise) {
+                  let (loss, acc) = computeLosses()
+                  return (loss: loss, metrics: ["acc": acc])
+                }
+                return (loss: loss, acc: metrics["acc"]!)
+              }()
             } else {
               try await {
                 let (meanLoss, meanAcc) = computeLosses()
@@ -179,38 +194,5 @@ import MNIST
         }
       }
     } catch { print("FATAL ERROR: \(error)") }
-  }
-
-  @recordCaller private func _evolutionStrategies(
-    model: TrainableProto,
-    epsilon: Float,
-    lossFn: () -> LossAndAcc
-  ) -> LossAndAcc {
-    Tensor.withGrad(enabled: false) {
-      let noise: [Tensor?] = model.parameters.map {
-        if let data = $0.1.data { Tensor(randnLike: data) } else { nil }
-      }
-      let center: [Tensor?] = model.parameters.map { $0.1.data }
-
-      func assignWithScale(_ scale: Float) {
-        for ((_, var param), (center, noise)) in zip(model.parameters, zip(center, noise)) {
-          if let center = center, let noise = noise { param.data = center + noise * scale }
-        }
-      }
-      assignWithScale(-epsilon)
-      let (negLoss, negAcc) = lossFn()
-      assignWithScale(epsilon)
-      let (posLoss, posAcc) = lossFn()
-      assignWithScale(0.0)
-
-      for ((_, var param), noise) in zip(model.parameters, noise) {
-        if let noise = noise {
-          let g = noise * (posLoss - negLoss) / (2 * epsilon)
-          if let grad = param.grad { param.grad = grad + g } else { param.grad = g }
-        }
-      }
-
-      return (loss: (negLoss + posLoss) / 2, acc: (negAcc + posAcc) / 2)
-    }
   }
 }
