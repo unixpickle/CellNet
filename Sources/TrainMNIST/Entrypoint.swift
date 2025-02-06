@@ -28,6 +28,7 @@ import MNIST
   @Option(name: .long, help: "MLP hidden size.") var hiddenSize: Int = 64
   @Option(name: .long, help: "Number of cells.") var cellCount: Int = 1024
   @Option(name: .long, help: "Activations per cell.") var actPerCell: Int = 16
+  @Option(name: .long, help: "Normalization mode.") var normalization: Cell.Normalization = .none
 
   // Adam hyperparams
   @Option(name: .shortAndLong, help: "Learning rate.") var lr: Float = 0.001
@@ -52,7 +53,12 @@ import MNIST
       Backend.defaultBackend = try MPSBackend(allocator: .bucket)
 
       let cell = SyncTrainable(
-        Cell(edgeCount: actPerCell, stateCount: stateCount, hiddenSize: hiddenSize)
+        Cell(
+          edgeCount: actPerCell,
+          stateCount: stateCount,
+          hiddenSize: hiddenSize,
+          normalization: normalization
+        )
       )
       let opt = Adam(
         cell.parameters,

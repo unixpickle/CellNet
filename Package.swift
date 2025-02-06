@@ -16,6 +16,7 @@ let package = Package(
     .target(
       name: "CellNet",
       dependencies: [
+        .product(name: "ArgumentParser", package: "swift-argument-parser"),
         .product(name: "Honeycrisp", package: "honeycrisp"),
         .product(name: "HCBacktrace", package: "honeycrisp"),
       ]

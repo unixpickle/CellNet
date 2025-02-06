@@ -1,3 +1,4 @@
+import ArgumentParser
 import HCBacktrace
 import Honeycrisp
 
@@ -40,8 +41,15 @@ public struct NetworkState: Sendable {
 }
 
 public class Cell: Trainable {
+  public enum Normalization: String, ExpressibleByArgument, CaseIterable, Sendable {
+    case none
+    case firstLayer
+    case lastLayer
+  }
+
   public let edgeCount: Int
   public let stateCount: Int
+  public let normalization: Normalization
 
   @Child public var stateProj: Linear
   @Child public var edgeProj: Linear
@@ -50,9 +58,15 @@ public class Cell: Trainable {
   @Child public var layer2: Linear
   @Child public var layer3: Linear
 
-  public init(edgeCount: Int, stateCount: Int, hiddenSize: Int) {
+  public init(
+    edgeCount: Int,
+    stateCount: Int,
+    hiddenSize: Int,
+    normalization: Normalization = .none
+  ) {
     self.edgeCount = edgeCount
     self.stateCount = stateCount
+    self.normalization = normalization
     super.init()
     self.stateProj = Linear(inCount: stateCount, outCount: hiddenSize)
     self.edgeProj = Linear(inCount: edgeCount, outCount: hiddenSize)
@@ -73,9 +87,15 @@ public class Cell: Trainable {
       stateProj(addInnerDimension(s.cellStates, size: stateCount))
       + prevEdgeProj(addInnerDimension(s.prevActivations, size: edgeCount))
       + edgeProj(addInnerDimension(s.activations, size: edgeCount)) + inOutProj(inOut)
+    if normalization == .firstLayer {
+      h = h.flatten(startAxis: 1).normalize(axis: -1, eps: 1e-5).reshape(h.shape)
+    }
     h = h.gelu()
     h = self.layer2(h)
     h = h.gelu()
+    if normalization == .lastLayer {
+      h = h.flatten(startAxis: 1).normalize(axis: -1, eps: 1e-5).reshape(h.shape)
+    }
     h = self.layer3(h)
 
     let rememberBias = 4 * Tensor(data: (0..<stateCount), dtype: .float32) / stateCount - 2
