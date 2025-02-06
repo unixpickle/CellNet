@@ -3,8 +3,6 @@ import Honeycrisp
 
 /// Evolution strategies implementation.
 public class ES {
-  public typealias LossAndMetrics = (loss: Tensor, metrics: [String: Tensor])
-
   public let model: TrainableProto
   public let eps: Float
   public let directionCount: Int
@@ -23,12 +21,13 @@ public class ES {
     }
   }
 
-  @recordCaller private func _forwardBackward(noises: [[Tensor?]], lossFn: () -> LossAndMetrics)
-    -> LossAndMetrics
-  {
+  @recordCaller private func _forwardBackward(
+    noises: [[Tensor?]],
+    metric: Metrics.Key = .loss,
+    lossFn: () -> Metrics
+  ) -> Metrics {
     Tensor.withGrad(enabled: false) {
-      var allLosses = [Tensor]()
-      var allMetrics = [String: [Tensor]]()
+      var allMetrics = [Metrics]()
       let center = model.parameters.map { $0.1.data }
 
       for noise in noises {
@@ -38,26 +37,34 @@ public class ES {
           }
         }
         assignWithScale(-eps)
-        let (negLoss, negMetrics) = lossFn()
+        let negMetrics = lossFn()
         assignWithScale(eps)
-        let (posLoss, posMetrics) = lossFn()
+        let posMetrics = lossFn()
         assignWithScale(0.0)
+
+        #alwaysAssert(
+          negMetrics.keys.contains(metric),
+          "metric \(metric) not in returned metrics: \(negMetrics.keys)"
+        )
+        #alwaysAssert(
+          posMetrics.keys.contains(metric),
+          "metric \(metric) not in returned metrics: \(posMetrics.keys)"
+        )
+
+        let delta = posMetrics[metric]! - negMetrics[metric]!
+        let scale = delta / (2 * eps * Float(noises.count))
 
         for ((_, var param), noise) in zip(model.parameters, noise) {
           if let noise = noise {
-            let g = noise * (posLoss - negLoss) / (2 * eps * Float(noises.count))
+            let g = noise * scale
             if let grad = param.grad { param.grad = grad + g } else { param.grad = g }
           }
         }
-        allLosses.append(contentsOf: [negLoss, posLoss])
-        for d in [negMetrics, posMetrics] {
-          for (k, v) in d { allMetrics[k] = (allMetrics[k] ?? []) + [v] }
-        }
+        allMetrics.append(contentsOf: [negMetrics, posMetrics])
+        allMetrics.append(Metrics(dictionary: [.esDelta: delta]))
       }
 
-      return (loss: averageMetric(allLosses), metrics: allMetrics.mapValues { averageMetric($0) })
+      return Metrics.mean(allMetrics)
     }
   }
 }
-
-func averageMetric(_ values: [Tensor]) -> Tensor { return Tensor(stack: values).mean() }

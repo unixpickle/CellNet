@@ -103,8 +103,7 @@ import MNIST
           )
         }
 
-        var totalMeanLoss = Tensor(zeros: [])
-        var totalMeanAcc = Tensor(zeros: [])
+        var allMetrics = [Metrics]()
         let mbSize = microbatch ?? batchSize
         let esNoise = es?.sampleNoises()
 
@@ -119,7 +118,7 @@ import MNIST
             outCount: 10
           )
 
-          func computeLosses() -> LossAndAcc {
+          func computeLosses() -> Metrics {
             let rollouts = Rollout.rollout(
               inferSteps: inferSteps,
               updateSteps: updateSteps,
@@ -138,34 +137,25 @@ import MNIST
             }
             let meanLoss = -Tensor(stack: losses).mean() * mbScale
             let meanAcc = Tensor(stack: accs).mean() * mbScale
-            return (loss: meanLoss, acc: meanAcc)
+            return [.loss: meanLoss, .accuracy: meanAcc]
           }
 
-          let (meanLoss, meanAcc) =
+          let metrics =
             if let es = es, let esNoise = esNoise {
-              {
-                let (loss, metrics) = es.forwardBackward(noises: esNoise) {
-                  let (loss, acc) = computeLosses()
-                  return (loss: loss, metrics: ["acc": acc])
-                }
-                return (loss: loss, acc: metrics["acc"]!)
-              }()
+              es.forwardBackward(noises: esNoise, lossFn: computeLosses)
             } else {
               try await {
-                let (meanLoss, meanAcc) = computeLosses()
-                meanLoss.backward()
+                let metrics = computeLosses()
+                metrics[.loss]!.backward()
                 // Wait for backward computation before using memory
                 // for the next microbatch.
                 if i + curMbSize < batchSize {
                   for (_, p) in cell.parameters { if let g = p.grad { try await g.wait() } }
                 }
-                return (loss: meanLoss, acc: meanAcc)
+                return metrics.noGrad()
               }()
             }
-          Tensor.withGrad(enabled: false) {
-            totalMeanLoss = totalMeanLoss + meanLoss
-            totalMeanAcc = totalMeanAcc + meanAcc
-          }
+          allMetrics.append(metrics)
         }
 
         let (gradNorm, gradScale) = try await clipper.clipGrads(model: cell)
@@ -174,11 +164,10 @@ import MNIST
         opt.clearGrads()
 
         step += 1
-        print(
-          "step \(step):" + " loss=\(try await totalMeanLoss.item())"
-            + " acc=\(try await totalMeanAcc.item())" + " grad_norm=\(gradNorm)"
-            + " grad_scale=\(gradScale)"
-        )
+        var metrics = Metrics.sum(allMetrics)
+        metrics[.gradNorm] = Tensor(data: [gradNorm])
+        metrics[.gradScale] = Tensor(data: [gradScale])
+        print("step \(step): \(try await metrics.format())")
 
         if step % saveInterval == 0 {
           print("saving after \(step) steps...")

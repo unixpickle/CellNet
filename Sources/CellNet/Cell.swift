@@ -85,14 +85,14 @@ public class Cell: Trainable {
     )
     let stateUpdate = h[FullRange(count: h.shape.count - 1), stateCount..<(stateCount * 2)].flatten(
       startAxis: -2
-    ).tanh()
+    )
     let outputs = h[FullRange(count: h.shape.count - 1), (stateCount * 2)]
     let actMask = h[
       FullRange(count: h.shape.count - 1),
       (stateCount * 2 + 1)..<(stateCount * 2 + edgeCount + 1)
     ].flatten(startAxis: -2)
     let actUpdate = h[FullRange(count: h.shape.count - 1), (stateCount * 2 + edgeCount + 1)...]
-      .flatten(startAxis: -2).tanh()
+      .flatten(startAxis: -2)
 
     return (
       outputs: outputs,
