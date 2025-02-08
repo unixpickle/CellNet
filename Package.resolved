@@ -1,5 +1,5 @@
 {
-  "originHash" : "59db5846acc567d39957883640be031e5b269afc8d725369c6dc7ed5a97715a7",
+  "originHash" : "58e018b5bbfb015c86a969073da83626441ca66757b5364ba10eb1f00000cdeb",
   "pins" : [
     {
       "identity" : "async-http-client",
@@ -33,8 +33,8 @@
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/unixpickle/honeycrisp",
       "state" : {
-        "revision" : "7003cbc1ec90e4353f90ef8b78022ff92d2e0420",
-        "version" : "0.0.25"
+        "revision" : "71acabad5520f9a4367d250cb26276d172eb5526",
+        "version" : "0.0.26"
       }
     },
     {
