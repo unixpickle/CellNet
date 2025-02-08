@@ -68,12 +68,16 @@ public class Cell: Trainable {
     self.stateCount = stateCount
     self.normalization = normalization
     super.init()
-    self.stateProj = Linear(inCount: stateCount, outCount: hiddenSize)
-    self.edgeProj = Linear(inCount: edgeCount, outCount: hiddenSize)
-    self.prevEdgeProj = Linear(inCount: edgeCount, outCount: hiddenSize)
-    self.inOutProj = Linear(inCount: 2, outCount: hiddenSize)
-    self.layer2 = Linear(inCount: hiddenSize, outCount: hiddenSize)
-    self.layer3 = Linear(inCount: hiddenSize, outCount: stateCount * 2 + edgeCount * 2 + 1)
+    self.stateProj = Linear(inCount: stateCount, outCount: hiddenSize, bias: false)
+    self.edgeProj = Linear(inCount: edgeCount, outCount: hiddenSize, bias: false)
+    self.prevEdgeProj = Linear(inCount: edgeCount, outCount: hiddenSize, bias: false)
+    self.inOutProj = Linear(inCount: 2, outCount: hiddenSize, bias: false)
+    self.layer2 = Linear(inCount: hiddenSize, outCount: hiddenSize, bias: false)
+    self.layer3 = Linear(
+      inCount: hiddenSize,
+      outCount: stateCount * 2 + edgeCount * 2 + 1,
+      bias: false
+    )
   }
 
   @recordCaller private func _callAsFunction(_ s: NetworkState) -> (
