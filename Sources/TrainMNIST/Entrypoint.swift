@@ -12,7 +12,7 @@ import MNIST
     let model: Trainable.State
     let step: Int?
     let data: DataIterator.State?
-    let opt: Adam.State?
+    let opt: Muon.State?
     let clipper: GradClipper.State?
   }
 
@@ -30,12 +30,10 @@ import MNIST
   @Option(name: .long, help: "Activations per cell.") var actPerCell: Int = 16
   @Option(name: .long, help: "Normalization mode.") var normalization: Cell.Normalization = .none
 
-  // Adam hyperparams
-  @Option(name: .shortAndLong, help: "Learning rate.") var lr: Float = 0.001
-  @Option(name: .long, help: "Adam beta1.") var beta1: Float = 0.9
-  @Option(name: .long, help: "Adam beta2.") var beta2: Float = 0.999
-  @Option(name: .long, help: "Adam epsilon.") var eps: Float = 1e-8
-  @Option(name: .long, help: "AdamW weight decay.") var weightDecay: Float = 0.0
+  // Muon hyperparams
+  @Option(name: .shortAndLong, help: "Learning rate.") var lr: Float = 0.01
+  @Option(name: .long, help: "Muon momentum.") var momentum: Float = 0.95
+  @Option(name: .long, help: "Muon weight decay.") var weightDecay: Float = 0.0
 
   // Evolutions strategies
   @Option(name: .long, help: "If specified, use Evolution Strategies with this epsilon.")
@@ -60,14 +58,7 @@ import MNIST
           normalization: normalization
         )
       )
-      let opt = Adam(
-        cell.parameters,
-        lr: lr,
-        beta1: beta1,
-        beta2: beta2,
-        eps: eps,
-        weightDecay: weightDecay
-      )
+      let opt = Muon(cell.parameters, lr: lr, momentum: momentum, weightDecay: weightDecay)
       let clipper = GradClipper()
 
       let dataset = try await MNISTDataset.download(toDir: "mnist_data")
