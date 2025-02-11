@@ -35,6 +35,9 @@ import MNIST
   @Option(name: .long, help: "Muon momentum.") var momentum: Float = 0.95
   @Option(name: .long, help: "Muon weight decay.") var weightDecay: Float = 0.0
 
+  // Other optimizer hyperparameters
+  @Option(name: .long, help: "Maximum gradient RMS before clipping.") var maxGradRMS: Float = 100.0
+
   // Evolutions strategies
   @Option(name: .long, help: "If specified, use Evolution Strategies with this epsilon.")
   var esEpsilon: Float? = nil
@@ -103,6 +106,7 @@ import MNIST
         var allMetrics = [Metrics]()
         let mbSize = microbatch ?? batchSize
         let esNoise = es?.sampleNoises()
+        let actGradClipper = ActGradClipper(maxRMS: maxGradRMS)
 
         for i in stride(from: 0, to: batchSize, by: mbSize) {
           let curMbSize = min(batchSize - i, mbSize)
@@ -122,7 +126,8 @@ import MNIST
               inputs: allInputs.map { $0[i..<(i + curMbSize)] },
               targets: allLabels.map { $0[i..<(i + curMbSize)] },
               cell: cell,
-              graph: graph
+              graph: graph,
+              clipper: actGradClipper
             )
 
             let subLabelIndices = allLabelIndices.map { $0[i..<(i + curMbSize)] }
@@ -162,6 +167,7 @@ import MNIST
 
         step += 1
         var metrics = Metrics.sum(allMetrics)
+        metrics += actGradClipper.metrics
         metrics[.gradNorm] = Tensor(data: [gradNorm])
         metrics[.gradScale] = Tensor(data: [gradScale])
         print("step \(step): \(try await metrics.format())")

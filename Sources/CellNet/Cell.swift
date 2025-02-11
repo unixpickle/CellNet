@@ -80,7 +80,7 @@ public class Cell: Trainable {
     )
   }
 
-  @recordCaller private func _callAsFunction(_ s: NetworkState) -> (
+  @recordCaller private func _callAsFunction(_ s: NetworkState, clipper: ActGradClipper? = nil) -> (
     outputs: Tensor, newActs: Tensor, newCellStates: Tensor
   ) {
     let inOut = Tensor(
@@ -101,6 +101,7 @@ public class Cell: Trainable {
       h = h.flatten(startAxis: 1).normalize(axis: -1, eps: 1e-5).reshape(h.shape)
     }
     h = self.layer3(h)
+    if let c = clipper { h = c(h) }
 
     let rememberBias = 4 * Tensor(data: (0..<stateCount), dtype: .float32) / stateCount - 2
 
