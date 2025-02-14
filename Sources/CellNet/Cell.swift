@@ -184,8 +184,9 @@ public class Cell: Trainable {
 
     return (
       outputs: outputs,
-      newActs: actMask.sigmoid() * s.prevActivations + (-actMask).sigmoid() * actUpdate,
-      newCellStates: stateMask.sigmoid() * s.cellStates + (-stateMask).sigmoid() * stateUpdate
+      newActs: actMask.sigmoid() * s.prevActivations + (-actMask).sigmoid() * actUpdate.tanh(),
+      newCellStates: stateMask.sigmoid() * s.cellStates + (-stateMask).sigmoid()
+        * stateUpdate.tanh()
     )
   }
 }
