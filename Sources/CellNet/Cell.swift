@@ -1,4 +1,5 @@
 import ArgumentParser
+import Foundation
 import HCBacktrace
 import Honeycrisp
 
@@ -40,6 +41,61 @@ public struct NetworkState: Sendable {
   }
 }
 
+public class MetaLinear: Trainable {
+  @Param(name: "weight") public var weight: Tensor
+
+  public let castParams: Tensor.DType?
+
+  public init(
+    inCount: Int,
+    outCount: Int,
+    dtype: Tensor.DType = .float32,
+    castParams: Tensor.DType? = nil
+  ) {
+    self.castParams = castParams
+    super.init()
+    self.weight =
+      (Tensor(rand: [inCount, outCount], dtype: dtype) - 0.5)
+      * (sqrt(3.0) / 0.5 / sqrt(Float(inCount)))
+  }
+
+  @recordCaller private func _callAsFunction(
+    _ x: Tensor,
+    weight: Tensor? = nil,
+    weightGradBackend: Backend? = nil
+  ) -> Tensor {
+    if x.shape.count > 2 {
+      let squashedBatch = x.reshape([
+        x.shape[..<(x.shape.count - 1)].reduce(1, *), x.shape[x.shape.count - 1],
+      ])
+      let out = self(squashedBatch, weight: weight, weightGradBackend: weightGradBackend)
+      return out.reshape(x.shape[..<(x.shape.count - 1)] + [out.shape[out.shape.count - 1]])
+    }
+
+    var weight = (weight ?? self.weight)
+    weight = weight.cast(castParams ?? weight.dtype)
+
+    if weight.shape.count == 3 {
+      return Tensor.batchedMatmul(
+        a: x.reshape([weight.shape[0], x.shape[0] / weight.shape[0], x.shape[1]]),
+        transA: false,
+        b: weight,
+        transB: false,
+        transOut: false
+      ).flatten(endAxis: 1)
+    } else {
+      return Tensor.matmul(
+        a: x,
+        transA: false,
+        b: weight,
+        transB: false,
+        transOut: false,
+        bGradBackend: weightGradBackend
+      )
+    }
+  }
+}
+
 public class Cell: Trainable {
   public enum Normalization: String, ExpressibleByArgument, CaseIterable, Sendable {
     case none
@@ -51,12 +107,12 @@ public class Cell: Trainable {
   public let stateCount: Int
   public let normalization: Normalization
 
-  @Child public var stateProj: Linear
-  @Child public var edgeProj: Linear
-  @Child public var prevEdgeProj: Linear
-  @Child public var inOutProj: Linear
-  @Child public var layer2: Linear
-  @Child public var layer3: Linear
+  @Child(name: "stateProj") public var stateProj: MetaLinear
+  @Child(name: "edgeProj") public var edgeProj: MetaLinear
+  @Child(name: "prevEdgeProj") public var prevEdgeProj: MetaLinear
+  @Child(name: "inOutProj") public var inOutProj: MetaLinear
+  @Child(name: "layer2") public var layer2: MetaLinear
+  @Child(name: "layer3") public var layer3: MetaLinear
 
   public init(
     edgeCount: Int,
@@ -68,39 +124,46 @@ public class Cell: Trainable {
     self.stateCount = stateCount
     self.normalization = normalization
     super.init()
-    self.stateProj = Linear(inCount: stateCount, outCount: hiddenSize, bias: false)
-    self.edgeProj = Linear(inCount: edgeCount, outCount: hiddenSize, bias: false)
-    self.prevEdgeProj = Linear(inCount: edgeCount, outCount: hiddenSize, bias: false)
-    self.inOutProj = Linear(inCount: 2, outCount: hiddenSize, bias: false)
-    self.layer2 = Linear(inCount: hiddenSize, outCount: hiddenSize, bias: false)
-    self.layer3 = Linear(
-      inCount: hiddenSize,
-      outCount: stateCount * 2 + edgeCount * 2 + 1,
-      bias: false
-    )
+    self.stateProj = MetaLinear(inCount: stateCount, outCount: hiddenSize)
+    self.edgeProj = MetaLinear(inCount: edgeCount, outCount: hiddenSize)
+    self.prevEdgeProj = MetaLinear(inCount: edgeCount, outCount: hiddenSize)
+    self.inOutProj = MetaLinear(inCount: 2, outCount: hiddenSize)
+    self.layer2 = MetaLinear(inCount: hiddenSize, outCount: hiddenSize)
+    self.layer3 = MetaLinear(inCount: hiddenSize, outCount: stateCount * 2 + edgeCount * 2 + 1)
   }
 
-  @recordCaller private func _callAsFunction(_ s: NetworkState, clipper: ActGradClipper? = nil) -> (
-    outputs: Tensor, newActs: Tensor, newCellStates: Tensor
-  ) {
+  @recordCaller private func _callAsFunction(
+    _ s: NetworkState,
+    params: [String: Tensor]? = nil,
+    clipper: ActGradClipper? = nil
+  ) -> (outputs: Tensor, newActs: Tensor, newCellStates: Tensor) {
     let inOut = Tensor(
       concat: [addInnerDimension(s.inputs, size: 1), addInnerDimension(s.targets, size: 1)],
       axis: -1
     )
     var h =
-      stateProj(addInnerDimension(s.cellStates, size: stateCount))
-      + prevEdgeProj(addInnerDimension(s.prevActivations, size: edgeCount))
-      + edgeProj(addInnerDimension(s.activations, size: edgeCount)) + inOutProj(inOut)
+      stateProj(
+        addInnerDimension(s.cellStates, size: stateCount),
+        weight: params?["stateProj.weight"]
+      )
+      + prevEdgeProj(
+        addInnerDimension(s.prevActivations, size: edgeCount),
+        weight: params?["prevEdgeProj.weight"]
+      )
+      + edgeProj(
+        addInnerDimension(s.activations, size: edgeCount),
+        weight: params?["edgeProj.weight"]
+      ) + inOutProj(inOut, weight: params?["inOutProj.weight"])
     if normalization == .firstLayer {
       h = h.flatten(startAxis: 1).normalize(axis: -1, eps: 1e-5).reshape(h.shape)
     }
     h = h.gelu()
-    h = self.layer2(h)
+    h = self.layer2(h, weight: params?["layer2.weight"])
     h = h.gelu()
     if normalization == .lastLayer {
       h = h.flatten(startAxis: 1).normalize(axis: -1, eps: 1e-5).reshape(h.shape)
     }
-    h = self.layer3(h)
+    h = self.layer3(h, weight: params?["layer3.weight"])
     if let c = clipper { h = c(h) }
 
     let rememberBias = 4 * Tensor(data: (0..<stateCount), dtype: .float32) / stateCount - 2
