@@ -2,7 +2,6 @@ import HCBacktrace
 import Honeycrisp
 
 public struct Graph: Sendable {
-  public let batchSize: Int
   public let cellCount: Int
   public let actPerCell: Int
   public let inCount: Int
@@ -11,17 +10,10 @@ public struct Graph: Sendable {
   /// A permutation of shape [batchSize, actCount].
   public let graphPerm: Tensor
 
+  public var batchSize: Int { graphPerm.shape[0] }
   public var actCount: Int { cellCount * actPerCell }
 
-  public init(
-    batchSize: Int,
-    cellCount: Int,
-    actPerCell: Int,
-    graphPerm: Tensor,
-    inCount: Int,
-    outCount: Int
-  ) {
-    self.batchSize = batchSize
+  public init(cellCount: Int, actPerCell: Int, graphPerm: Tensor, inCount: Int, outCount: Int) {
     self.cellCount = cellCount
     self.actPerCell = actPerCell
     self.graphPerm = graphPerm
@@ -60,13 +52,26 @@ public struct Graph: Sendable {
     }
 
     return Graph(
-      batchSize: batchSize,
       cellCount: cellCount,
       actPerCell: actPerCell,
       graphPerm: Tensor(stack: allGraphPerm),
       inCount: inCount,
       outCount: outCount
     )
+  }
+
+  @recordCaller private func _repeated(count: Int) -> Graph {
+    if count == 1 {
+      self
+    } else {
+      Graph(
+        cellCount: cellCount,
+        actPerCell: actPerCell,
+        graphPerm: graphPerm.repeating(axis: 0, count: count),
+        inCount: inCount,
+        outCount: outCount
+      )
+    }
   }
 
   /// Gather the used outputs from the outputs tensor.

@@ -31,6 +31,7 @@ public struct Rollout {
     cell: SyncTrainable<Cell>,
     graph: Graph,
     resetActs: Bool = false,
+    params: [String: Tensor]? = nil,
     clipper: ActGradClipper? = nil
   ) -> Rollout {
     #alwaysAssert(inputs.count == targets.count)
@@ -58,6 +59,7 @@ public struct Rollout {
               activations: xs[3],
               cellStates: xs[4]
             ),
+            params: params,
             clipper: clipper
           )
         }

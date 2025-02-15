@@ -42,6 +42,7 @@ import MNIST
   @Option(name: .long, help: "If specified, use Evolution Strategies with this epsilon.")
   var esEpsilon: Float? = nil
   @Option(name: .long, help: "The ES population size.") var esPopulation: Int = 1
+  @Option(name: .long, help: "The ES batch size.") var esBatchSize: Int = 1
 
   // Saving
   @Option(name: .shortAndLong, help: "Output path.") var outputPath: String = "state.plist"
@@ -119,35 +120,50 @@ import MNIST
             outCount: 10
           )
 
-          func computeLosses() -> Metrics {
+          func computeLosses(
+            count: Int = 1,
+            params: [String: Tensor]? = nil,
+            scalarMetrics: Bool = false
+          ) -> Metrics {
             let rollouts = Rollout.rollout(
               inferSteps: inferSteps,
               updateSteps: updateSteps,
-              inputs: allInputs.map { $0[i..<(i + curMbSize)] },
-              targets: allLabels.map { $0[i..<(i + curMbSize)] },
+              inputs: allInputs.map { $0[i..<(i + curMbSize)].repeating(axis: 0, count: count) },
+              targets: allLabels.map { $0[i..<(i + curMbSize)].repeating(axis: 0, count: count) },
               cell: cell,
-              graph: graph,
+              graph: graph.repeated(count: count),
+              params: params,
               clipper: actGradClipper
             )
 
-            let subLabelIndices = allLabelIndices.map { $0[i..<(i + curMbSize)] }
+            func means(_ x: Tensor) -> Tensor {
+              if scalarMetrics { return x.mean() }
+              let x = x.reshape([count, x.shape[0] / count] + x.shape[1...])
+              return x.flatten(startAxis: 1).mean(axis: 1)
+            }
+
+            let subLabelIndices = allLabelIndices.map {
+              $0[i..<(i + curMbSize)].repeating(axis: 0, count: count)
+            }
             let losses = zip(subLabelIndices, rollouts.outputs).map { (labelIdxs, logits) in
-              logits.logSoftmax(axis: -1).gather(axis: 1, indices: labelIdxs[..., NewAxis()]).mean()
+              means(logits.logSoftmax(axis: -1).gather(axis: 1, indices: labelIdxs[..., NewAxis()]))
             }
             let accs = zip(subLabelIndices, rollouts.outputs).map { (labelIdxs, logits) in
-              (labelIdxs == logits.argmax(axis: 1)).cast(.float32).mean()
+              means((labelIdxs == logits.argmax(axis: 1)).cast(.float32))
             }
-            let meanLoss = -Tensor(stack: losses).mean() * mbScale
-            let meanAcc = Tensor(stack: accs).mean() * mbScale
+            let meanLoss = -Tensor(stack: losses).mean(axis: 0) * mbScale
+            let meanAcc = Tensor(stack: accs).mean(axis: 0) * mbScale
             return [.loss: meanLoss, .accuracy: meanAcc]
           }
 
           let metrics =
             if let es = es, let esNoise = esNoise {
-              es.forwardBackward(noises: esNoise, lossFn: computeLosses)
+              try await es.forwardBackward(noises: esNoise, batchSize: esBatchSize) { x, y in
+                computeLosses(count: x, params: y)
+              }
             } else {
               try await {
-                let metrics = computeLosses()
+                let metrics = computeLosses(scalarMetrics: true)
                 metrics[.loss]!.backward()
                 // Wait for backward computation before using memory
                 // for the next microbatch.

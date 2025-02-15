@@ -24,44 +24,47 @@ public class ES {
   @recordCaller private func _forwardBackward(
     noises: [[Tensor?]],
     metric: Metrics.Key = .loss,
-    lossFn: () -> Metrics
-  ) -> Metrics {
-    Tensor.withGrad(enabled: false) {
+    batchSize: Int,
+    lossFn: (Int, [String: Tensor]?) -> Metrics
+  ) async throws -> Metrics {
+    try await Tensor.withGrad(enabled: false) {
       var allMetrics = [Metrics]()
-      let center = model.parameters.map { $0.1.data }
 
-      for noise in noises {
-        func assignWithScale(_ scale: Float) {
-          for ((_, var param), (center, noise)) in zip(model.parameters, zip(center, noise)) {
-            if let center = center, let noise = noise { param.data = center + noise * scale }
+      for i in stride(from: 0, to: noises.count, by: batchSize) {
+        let subNoises = noises[i..<min(noises.count, i + batchSize)]
+        var params = [String: Tensor]()
+        for (i, (name, center)) in model.parameters.enumerated() {
+          var values = [Tensor]()
+          for noise in subNoises {
+            if let n = noise[i] {
+              values.append(center.data! + n * eps)
+              values.append(center.data! - n * eps)
+            }
           }
+          if !values.isEmpty { params[name] = Tensor(stack: values) }
         }
-        assignWithScale(-eps)
-        let negMetrics = lossFn()
-        assignWithScale(eps)
-        let posMetrics = lossFn()
-        assignWithScale(0.0)
-
+        let combinedMetrics = lossFn(subNoises.count * 2, params)
         #alwaysAssert(
-          negMetrics.keys.contains(metric),
-          "metric \(metric) not in returned metrics: \(negMetrics.keys)"
+          combinedMetrics.keys.contains(metric),
+          "metric \(metric) not in returned metrics: \(combinedMetrics.keys)"
         )
-        #alwaysAssert(
-          posMetrics.keys.contains(metric),
-          "metric \(metric) not in returned metrics: \(posMetrics.keys)"
-        )
+        allMetrics.append(Metrics(dictionary: combinedMetrics.values.mapValues { $0.mean() }))
 
-        let delta = posMetrics[metric]! - negMetrics[metric]!
-        let scale = delta / (2 * eps * Float(noises.count))
+        for (i, noise) in subNoises.enumerated() {
+          let posMetric = combinedMetrics[metric]![i * 2]
+          let negMetric = combinedMetrics[metric]![i * 2 + 1]
+          let delta = posMetric - negMetric
+          let scale = delta / (2 * eps * Float(noises.count))
+          try await scale.wait()
 
-        for ((_, var param), noise) in zip(model.parameters, noise) {
-          if let noise = noise {
-            let g = noise * scale
-            if let grad = param.grad { param.grad = grad + g } else { param.grad = g }
+          for ((_, var param), noise) in zip(model.parameters, noise) {
+            if let noise = noise {
+              let g = noise * scale
+              if let grad = param.grad { param.grad = grad + g } else { param.grad = g }
+            }
           }
+          allMetrics.append(Metrics(dictionary: [.esDelta: delta]))
         }
-        allMetrics.append(contentsOf: [negMetrics, posMetrics])
-        allMetrics.append(Metrics(dictionary: [.esDelta: delta]))
       }
 
       return Metrics.mean(allMetrics)
