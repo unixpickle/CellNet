@@ -37,6 +37,7 @@ import MNIST
 
   // Other optimizer hyperparameters
   @Option(name: .long, help: "Maximum gradient RMS before clipping.") var maxGradRMS: Float = 100.0
+  @Option(name: .long, help: "SAM gradient norm") var samRho: Float? = nil
 
   // Evolutions strategies
   @Option(name: .long, help: "If specified, use Evolution Strategies with this epsilon.")
@@ -104,76 +105,104 @@ import MNIST
           )
         }
 
-        var allMetrics = [Metrics]()
-        let mbSize = microbatch ?? batchSize
         let esNoise = es?.sampleNoises()
-        let actGradClipper = ActGradClipper(maxRMS: maxGradRMS)
 
-        for i in stride(from: 0, to: batchSize, by: mbSize) {
-          let curMbSize = min(batchSize - i, mbSize)
-          let mbScale = Float(curMbSize) / Float(batchSize)
-          let graph = Graph.random(
-            batchSize: curMbSize,
-            cellCount: cellCount,
-            actPerCell: actPerCell,
-            inCount: 28 * 28,
-            outCount: 10
-          )
-
-          func computeLosses(
-            count: Int = 1,
-            params: [String: Tensor]? = nil,
-            scalarMetrics: Bool = false
-          ) -> Metrics {
-            let rollouts = Rollout.rollout(
-              inferSteps: inferSteps,
-              updateSteps: updateSteps,
-              inputs: allInputs.map { $0[i..<(i + curMbSize)].repeating(axis: 0, count: count) },
-              targets: allLabels.map { $0[i..<(i + curMbSize)].repeating(axis: 0, count: count) },
-              cell: cell,
-              graph: graph.repeated(count: count),
-              params: params,
-              clipper: actGradClipper
+        func computeGradients() async throws -> Metrics {
+          var allMetrics = [Metrics]()
+          let actGradClipper = ActGradClipper(maxRMS: maxGradRMS)
+          let mbSize = microbatch ?? batchSize
+          for i in stride(from: 0, to: batchSize, by: mbSize) {
+            let curMbSize = min(batchSize - i, mbSize)
+            let mbScale = Float(curMbSize) / Float(batchSize)
+            let graph = Graph.random(
+              batchSize: curMbSize,
+              cellCount: cellCount,
+              actPerCell: actPerCell,
+              inCount: 28 * 28,
+              outCount: 10
             )
 
-            func means(_ x: Tensor) -> Tensor {
-              if scalarMetrics { return x.mean() }
-              let x = x.reshape([count, x.shape[0] / count] + x.shape[1...])
-              return x.flatten(startAxis: 1).mean(axis: 1)
-            }
+            func computeLosses(
+              count: Int = 1,
+              params: [String: Tensor]? = nil,
+              scalarMetrics: Bool = false
+            ) -> Metrics {
+              let rollouts = Rollout.rollout(
+                inferSteps: inferSteps,
+                updateSteps: updateSteps,
+                inputs: allInputs.map { $0[i..<(i + curMbSize)].repeating(axis: 0, count: count) },
+                targets: allLabels.map { $0[i..<(i + curMbSize)].repeating(axis: 0, count: count) },
+                cell: cell,
+                graph: graph.repeated(count: count),
+                params: params,
+                clipper: actGradClipper
+              )
 
-            let subLabelIndices = allLabelIndices.map {
-              $0[i..<(i + curMbSize)].repeating(axis: 0, count: count)
-            }
-            let losses = zip(subLabelIndices, rollouts.outputs).map { (labelIdxs, logits) in
-              means(logits.logSoftmax(axis: -1).gather(axis: 1, indices: labelIdxs[..., NewAxis()]))
-            }
-            let accs = zip(subLabelIndices, rollouts.outputs).map { (labelIdxs, logits) in
-              means((labelIdxs == logits.argmax(axis: 1)).cast(.float32))
-            }
-            let meanLoss = -Tensor(stack: losses).mean(axis: 0) * mbScale
-            let meanAcc = Tensor(stack: accs).mean(axis: 0) * mbScale
-            return [.loss: meanLoss, .accuracy: meanAcc]
-          }
-
-          let metrics =
-            if let es = es, let esNoise = esNoise {
-              try await es.forwardBackward(noises: esNoise, batchSize: esBatchSize) { x, y in
-                computeLosses(count: x, params: y)
+              func means(_ x: Tensor) -> Tensor {
+                if scalarMetrics { return x.mean() }
+                let x = x.reshape([count, x.shape[0] / count] + x.shape[1...])
+                return x.flatten(startAxis: 1).mean(axis: 1)
               }
-            } else {
-              try await {
-                let metrics = computeLosses(scalarMetrics: true)
-                metrics[.loss]!.backward()
-                // Wait for backward computation before using memory
-                // for the next microbatch.
-                if i + curMbSize < batchSize {
-                  for (_, p) in cell.parameters { if let g = p.grad { try await g.wait() } }
-                }
-                return metrics.noGrad()
-              }()
+
+              let subLabelIndices = allLabelIndices.map {
+                $0[i..<(i + curMbSize)].repeating(axis: 0, count: count)
+              }
+              let losses = zip(subLabelIndices, rollouts.outputs).map { (labelIdxs, logits) in
+                means(
+                  logits.logSoftmax(axis: -1).gather(axis: 1, indices: labelIdxs[..., NewAxis()])
+                )
+              }
+              let accs = zip(subLabelIndices, rollouts.outputs).map { (labelIdxs, logits) in
+                means((labelIdxs == logits.argmax(axis: 1)).cast(.float32))
+              }
+              let meanLoss = -Tensor(stack: losses).mean(axis: 0) * mbScale
+              let meanAcc = Tensor(stack: accs).mean(axis: 0) * mbScale
+              return [.loss: meanLoss, .accuracy: meanAcc]
             }
-          allMetrics.append(metrics)
+
+            let metrics =
+              if let es = es, let esNoise = esNoise {
+                try await es.forwardBackward(noises: esNoise, batchSize: esBatchSize) { x, y in
+                  computeLosses(count: x, params: y)
+                }
+              } else {
+                try await {
+                  let metrics = computeLosses(scalarMetrics: true)
+                  metrics[.loss]!.backward()
+                  // Wait for backward computation before using memory
+                  // for the next microbatch.
+                  if i + curMbSize < batchSize {
+                    for (_, p) in cell.parameters { if let g = p.grad { try await g.wait() } }
+                  }
+                  return metrics.noGrad()
+                }()
+              }
+            allMetrics.append(metrics)
+          }
+          var metrics = Metrics.sum(allMetrics)
+          metrics += actGradClipper.metrics
+          return metrics
+        }
+
+        var metrics = try await computeGradients()
+        if let samRho = samRho {
+          var oldParams = [Tensor]()
+          var sqSum = Tensor(data: [0.0], shape: [])
+          for (_, param) in cell.parameters {
+            if let data = param.data {
+              oldParams.append(data)
+              sqSum = sqSum + param.grad!.pow(2).sum()
+            }
+          }
+          let scale = (samRho / (sqSum.sqrt() + 1e-8))
+          for (_, var param) in cell.parameters {
+            if let grad = param.grad, let data = param.data { param.data = data + grad * scale }
+          }
+          opt.clearGrads()
+          try await computeGradients()
+          for (_, var param) in cell.parameters {
+            if param.data != nil { param.data = oldParams.removeFirst() }
+          }
         }
 
         let (gradNorm, gradScale) = try await clipper.clipGrads(model: cell)
@@ -182,8 +211,6 @@ import MNIST
         opt.clearGrads()
 
         step += 1
-        var metrics = Metrics.sum(allMetrics)
-        metrics += actGradClipper.metrics
         metrics[.gradNorm] = Tensor(data: [gradNorm])
         metrics[.gradScale] = Tensor(data: [gradScale])
         print("step \(step): \(try await metrics.format())")
