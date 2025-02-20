@@ -14,6 +14,7 @@ import MNIST
     let data: DataIterator.State?
     let opt: Muon.State?
     let clipper: GradClipper.State?
+    let fdState: FiniteDiffs.State?
   }
 
   // Dataset configuration
@@ -45,12 +46,22 @@ import MNIST
   @Option(name: .long, help: "The ES population size.") var esPopulation: Int = 1
   @Option(name: .long, help: "The ES batch size.") var esBatchSize: Int = 1
 
+  // Finite differences hyperparameters
+  @Option(name: .long, help: "If specified, use finite differences.") var fdEpsilon: Float? = nil
+  @Option(name: .long, help: "Number of axes to search in finite differences.") var fdAxes: Int = 16
+  @Option(name: .long, help: "Finite differences minibatch size.") var fdBatchSize: Int = 1
+
   // Saving
   @Option(name: .shortAndLong, help: "Output path.") var outputPath: String = "state.plist"
   @Option(name: .long, help: "Save interval.") var saveInterval: Int = 100
 
   mutating func run() async {
     print("Command:", CommandLine.arguments.joined(separator: " "))
+
+    if fdEpsilon != nil && esEpsilon != nil {
+      print("ERROR: cannot mix ES and finite differences")
+      return
+    }
 
     do {
       Backend.defaultBackend = try MPSBackend(allocator: .bucket)
@@ -71,6 +82,12 @@ import MNIST
 
       var step: Int = 0
 
+      let es: ES? =
+        if let eps = esEpsilon { ES(model: cell, eps: eps, directionCount: esPopulation) } else {
+          nil
+        }
+      let fd: FiniteDiffs? = if let eps = fdEpsilon { FiniteDiffs(model: cell, eps: eps, evalCount: fdAxes) } else { nil }
+
       if FileManager.default.fileExists(atPath: outputPath) {
         print("loading from checkpoint: \(outputPath) ...")
         let data = try Data(contentsOf: URL(fileURLWithPath: outputPath))
@@ -80,13 +97,9 @@ import MNIST
         if let optState = state.opt { try opt.loadState(optState) }
         if let clipperState = state.clipper { clipper.state = clipperState }
         if let dataState = state.data { dataIt.state = dataState }
+        if let fdState = state.fdState, let fd = fd { fd.loadState(fdState) }
         step = state.step ?? 0
       }
-
-      let es: ES? =
-        if let eps = esEpsilon { ES(model: cell, eps: eps, directionCount: esPopulation) } else {
-          nil
-        }
 
       while true {
         var allInputs = [Tensor]()
@@ -106,6 +119,7 @@ import MNIST
         }
 
         let esNoise = es?.sampleNoises()
+        let fdAxes = fd?.sampleAxes()
 
         func computeGradients() async throws -> Metrics {
           var allMetrics = [Metrics]()
@@ -165,6 +179,10 @@ import MNIST
                 try await es.forwardBackward(noises: esNoise, batchSize: esBatchSize) { x, y in
                   computeLosses(count: x, params: y)
                 }
+              } else if let fd = fd, let fdAxes = fdAxes {
+                try await fd.forwardBackward(sample: fdAxes, batchSize: fdBatchSize) { x, y in
+                  computeLosses(count: x, params: y)
+                }
               } else {
                 try await {
                   let metrics = computeLosses(scalarMetrics: true)
@@ -199,7 +217,7 @@ import MNIST
             if let grad = param.grad, let data = param.data { param.data = data + grad * scale }
           }
           opt.clearGrads()
-          try await computeGradients()
+          let _ = try await computeGradients()
           for (_, var param) in cell.parameters {
             if param.data != nil { param.data = oldParams.removeFirst() }
           }
@@ -222,7 +240,8 @@ import MNIST
             step: step,
             data: dataIt.state,
             opt: try await opt.state(),
-            clipper: clipper.state
+            clipper: clipper.state,
+            fdState: fd?.state()
           )
           let stateData = try PropertyListEncoder().encode(state)
           try stateData.write(to: URL(filePath: outputPath), options: .atomic)
