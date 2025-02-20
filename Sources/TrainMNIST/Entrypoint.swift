@@ -86,7 +86,10 @@ import MNIST
         if let eps = esEpsilon { ES(model: cell, eps: eps, directionCount: esPopulation) } else {
           nil
         }
-      let fd: FiniteDiffs? = if let eps = fdEpsilon { FiniteDiffs(model: cell, eps: eps, evalCount: fdAxes) } else { nil }
+      let fd: FiniteDiffs? =
+        if let eps = fdEpsilon { FiniteDiffs(model: cell, eps: eps, evalCount: fdAxes) } else {
+          nil
+        }
 
       if FileManager.default.fileExists(atPath: outputPath) {
         print("loading from checkpoint: \(outputPath) ...")

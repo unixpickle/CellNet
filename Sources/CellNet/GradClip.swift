@@ -17,8 +17,8 @@ public final class ActGradClipper: Sendable {
       Metrics()
     } else {
       Metrics(dictionary: [
-        .actGradRMS: Tensor(stack: rms).mean(),
-        .actGradClipFrac: Tensor(stack: clipped).cast(.float32).mean(),
+        .named("act_grad_rms"): Tensor(stack: rms).mean(),
+        .named("act_grad_clip_frac"): Tensor(stack: clipped).cast(.float32).mean(),
       ])
     }
   }

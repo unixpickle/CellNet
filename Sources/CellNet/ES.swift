@@ -63,7 +63,7 @@ public class ES {
               if let grad = param.grad { param.grad = grad + g } else { param.grad = g }
             }
           }
-          allMetrics.append(Metrics(dictionary: [.esDelta: delta]))
+          allMetrics.append(Metrics(dictionary: [.named("es_delta"): delta]))
         }
       }
 

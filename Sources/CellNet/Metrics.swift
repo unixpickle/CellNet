@@ -4,14 +4,12 @@ import Honeycrisp
 public struct Metrics: ExpressibleByDictionaryLiteral, Sequence {
   public typealias Value = Tensor
 
-  public enum Key {
+  public enum Key: Hashable {
     case loss
     case accuracy
     case gradNorm
     case gradScale
-    case esDelta
-    case actGradClipFrac
-    case actGradRMS
+    case named(String)
 
     public var logKey: String {
       switch self {
@@ -19,9 +17,7 @@ public struct Metrics: ExpressibleByDictionaryLiteral, Sequence {
       case .accuracy: "acc"
       case .gradNorm: "grad_norm"
       case .gradScale: "grad_scale"
-      case .esDelta: "es_delta"
-      case .actGradClipFrac: "act_grad_clip_frac"
-      case .actGradRMS: "act_grad_rms"
+      case .named(let x): x
       }
     }
   }
