@@ -38,7 +38,11 @@ import MNIST
 
   // Other optimizer hyperparameters
   @Option(name: .long, help: "Maximum gradient RMS before clipping.") var maxGradRMS: Float = 100.0
-  @Option(name: .long, help: "SAM gradient norm") var samRho: Float? = nil
+  @Option(
+    name: .long,
+    help:
+      "If specified, step along the gradient (rescaled to this norm) and penalize gradients that change too much"
+  ) var sharpnessClipDelta: Float? = nil
 
   // Evolutions strategies
   @Option(name: .long, help: "If specified, use Evolution Strategies with this epsilon.")
@@ -206,23 +210,10 @@ import MNIST
         }
 
         var metrics = try await computeGradients()
-        if let samRho = samRho {
-          var oldParams = [Tensor]()
-          var sqSum = Tensor(data: [0.0], shape: [])
-          for (_, param) in cell.parameters {
-            if let data = param.data {
-              oldParams.append(data)
-              sqSum = sqSum + param.grad!.pow(2).sum()
-            }
-          }
-          let scale = (samRho / (sqSum.sqrt() + 1e-8))
-          for (_, var param) in cell.parameters {
-            if let grad = param.grad, let data = param.data { param.data = data + grad * scale }
-          }
-          opt.clearGrads()
-          let _ = try await computeGradients()
-          for (_, var param) in cell.parameters {
-            if param.data != nil { param.data = oldParams.removeFirst() }
+        if let sharpnessClipDelta = sharpnessClipDelta {
+          metrics += try await sharpnessClip(cell: cell, delta: sharpnessClipDelta) {
+            opt.clearGrads()
+            let _ = try await computeGradients()
           }
         }
 
@@ -251,5 +242,45 @@ import MNIST
         }
       }
     } catch { print("FATAL ERROR: \(error)") }
+  }
+
+  @recordCaller private func _sharpnessClip(
+    cell: TrainableProto,
+    delta: Float,
+    gradCallback: () async throws -> Void
+  ) async throws -> Metrics {
+    var oldParams = [Tensor]()
+    var oldGrads = [Tensor]()
+    var sqSum = Tensor(data: [0.0], shape: [])
+    for (_, param) in cell.parameters {
+      if let data = param.data, let grad = param.grad {
+        oldParams.append(data)
+        oldGrads.append(grad)
+        sqSum = sqSum + grad.pow(2).sum()
+      }
+    }
+    let scale = (delta / (sqSum.sqrt() + 1e-8))
+    for (_, var param) in cell.parameters {
+      if let grad = param.grad, let data = param.data { param.data = data + grad * scale }
+    }
+
+    try await gradCallback()
+
+    var newSqSum = Tensor(data: [0.0], shape: [])
+    var gradDot = newSqSum
+    for (_, var param) in cell.parameters {
+      if let newGrad = param.grad {
+        param.grad = oldGrads.removeFirst()
+        newSqSum = newSqSum + newGrad.pow(2).sum()
+        gradDot = gradDot + (newGrad * param.grad!).sum()
+        param.data = oldParams.removeFirst()
+      }
+    }
+
+    let correlation = gradDot / (sqSum.sqrt() * newSqSum.sqrt() + 1e-8)
+    for (_, var param) in cell.parameters {
+      if let grad = param.grad { param.grad = grad * correlation }
+    }
+    return [.named("sharpness_scale"): correlation]
   }
 }
