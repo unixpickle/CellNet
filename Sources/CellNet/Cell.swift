@@ -42,6 +42,11 @@ public struct NetworkState: Sendable {
 }
 
 public class MetaLinear: Trainable {
+  public enum Initialization: String, ExpressibleByArgument, CaseIterable, Sendable {
+    case xavier
+    case ortho
+  }
+
   @Param(name: "weight") public var weight: Tensor
 
   public let castParams: Tensor.DType?
@@ -50,13 +55,21 @@ public class MetaLinear: Trainable {
     inCount: Int,
     outCount: Int,
     dtype: Tensor.DType = .float32,
-    castParams: Tensor.DType? = nil
+    castParams: Tensor.DType? = nil,
+    initialization: Initialization = .xavier
   ) {
     self.castParams = castParams
     super.init()
-    self.weight =
-      (Tensor(rand: [inCount, outCount], dtype: dtype) - 0.5)
-      * (sqrt(3.0) / 0.5 / sqrt(Float(inCount)))
+    switch initialization {
+    case .xavier:
+      self.weight =
+        (Tensor(rand: [inCount, outCount], dtype: dtype) - 0.5)
+        * (sqrt(3.0) / 0.5 / sqrt(Float(inCount)))
+    case .ortho:
+      let noise = Tensor(randn: [inCount, outCount], dtype: dtype)
+      let (u, _, vt) = noise.svd(full: false)
+      self.weight = u &* vt
+    }
   }
 
   @recordCaller private func _callAsFunction(
@@ -101,6 +114,7 @@ public class Cell: Trainable {
     case none
     case firstLayer
     case lastLayer
+    case lastLayerDimwise
   }
 
   public let edgeCount: Int
@@ -118,18 +132,39 @@ public class Cell: Trainable {
     edgeCount: Int,
     stateCount: Int,
     hiddenSize: Int,
-    normalization: Normalization = .none
+    normalization: Normalization = .none,
+    initialization: MetaLinear.Initialization = .xavier
   ) {
     self.edgeCount = edgeCount
     self.stateCount = stateCount
     self.normalization = normalization
     super.init()
-    self.stateProj = MetaLinear(inCount: stateCount, outCount: hiddenSize)
-    self.edgeProj = MetaLinear(inCount: edgeCount, outCount: hiddenSize)
-    self.prevEdgeProj = MetaLinear(inCount: edgeCount, outCount: hiddenSize)
-    self.inOutProj = MetaLinear(inCount: 2, outCount: hiddenSize)
-    self.layer2 = MetaLinear(inCount: hiddenSize, outCount: hiddenSize)
-    self.layer3 = MetaLinear(inCount: hiddenSize, outCount: stateCount * 2 + edgeCount * 2 + 1)
+    self.stateProj = MetaLinear(
+      inCount: stateCount,
+      outCount: hiddenSize,
+      initialization: initialization
+    )
+    self.edgeProj = MetaLinear(
+      inCount: edgeCount,
+      outCount: hiddenSize,
+      initialization: initialization
+    )
+    self.prevEdgeProj = MetaLinear(
+      inCount: edgeCount,
+      outCount: hiddenSize,
+      initialization: initialization
+    )
+    self.inOutProj = MetaLinear(inCount: 2, outCount: hiddenSize, initialization: initialization)
+    self.layer2 = MetaLinear(
+      inCount: hiddenSize,
+      outCount: hiddenSize,
+      initialization: initialization
+    )
+    self.layer3 = MetaLinear(
+      inCount: hiddenSize,
+      outCount: stateCount * 2 + edgeCount * 2 + 1,
+      initialization: initialization
+    )
   }
 
   @recordCaller private func _callAsFunction(
@@ -162,6 +197,8 @@ public class Cell: Trainable {
     h = h.gelu()
     if normalization == .lastLayer {
       h = h.flatten(startAxis: 1).normalize(axis: -1, eps: 1e-5).reshape(h.shape)
+    } else if normalization == .lastLayerDimwise {
+      h = h.normalize(axis: 1, eps: 1e-5)
     }
     h = self.layer3(h, weight: params?["layer3.weight"])
     if let c = clipper { h = c(h) }

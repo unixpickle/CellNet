@@ -30,6 +30,8 @@ import MNIST
   @Option(name: .long, help: "Number of cells.") var cellCount: Int = 1024
   @Option(name: .long, help: "Activations per cell.") var actPerCell: Int = 16
   @Option(name: .long, help: "Normalization mode.") var normalization: Cell.Normalization = .none
+  @Option(name: .long, help: "Initialization scheme.") var initialization:
+    MetaLinear.Initialization = .xavier
 
   // Muon hyperparams
   @Option(name: .shortAndLong, help: "Learning rate.") var lr: Float = 0.01
@@ -75,7 +77,8 @@ import MNIST
           edgeCount: actPerCell,
           stateCount: stateCount,
           hiddenSize: hiddenSize,
-          normalization: normalization
+          normalization: normalization,
+          initialization: initialization
         )
       )
       let opt = Muon(cell.parameters, lr: lr, momentum: momentum, weightDecay: weightDecay)
