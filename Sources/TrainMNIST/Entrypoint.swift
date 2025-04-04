@@ -35,6 +35,8 @@ import MNIST
 
   // Muon hyperparams
   @Option(name: .shortAndLong, help: "Learning rate.") var lr: Float = 0.01
+  @Option(name: .shortAndLong, help: "Minimum eigenvalue to rescale in Muon.") var muonEpsilon:
+    Float = 0.01
   @Option(name: .long, help: "Muon momentum.") var momentum: Float = 0.95
   @Option(name: .long, help: "Muon weight decay.") var weightDecay: Float = 0.0
 
@@ -45,6 +47,14 @@ import MNIST
     help:
       "If specified, step along the gradient (rescaled to this norm) and penalize gradients that change too much"
   ) var sharpnessClipDelta: Float? = nil
+  @Option(name: .long, help: "Threshold under which to completely clip gradients")
+  var sharpnessClipThreshold: Float = 0.1
+  @Option(name: .long, help: "Parameter decay rate when sharp gradients are clipped")
+  var sharpnessClipDecay: Float = 0.995
+  @Option(
+    name: .long,
+    help: "If the loss gets this much worse during sharpness clipping, clip the gradient to zero"
+  ) var sharpnessLossDelta: Float = 0.01
 
   // Evolutions strategies
   @Option(name: .long, help: "If specified, use Evolution Strategies with this epsilon.")
@@ -81,7 +91,18 @@ import MNIST
           initialization: initialization
         )
       )
-      let opt = Muon(cell.parameters, lr: lr, momentum: momentum, weightDecay: weightDecay)
+      func waitForGrads() async throws {
+        for (_, p) in cell.parameters { if let g = p.grad { try await g.wait() } }
+      }
+
+      let opt = Muon(
+        cell.parameters,
+        lr: lr,
+        momentum: momentum,
+        weightDecay: weightDecay,
+        nsSteps: nil,
+        epsilon: muonEpsilon
+      )
       let clipper = GradClipper()
 
       let dataset = try await MNISTDataset.download(toDir: "mnist_data")
@@ -162,26 +183,30 @@ import MNIST
                 clipper: actGradClipper
               )
 
-              func means(_ x: Tensor) -> Tensor {
-                if scalarMetrics { return x.mean() }
-                let x = x.reshape([count, x.shape[0] / count] + x.shape[1...])
-                return x.flatten(startAxis: 1).mean(axis: 1)
-              }
+              // Tiny computations are faster on CPU and don't launch a ton of kernels.
+              return CPUBackend.global.use {
+                func means(_ x: Tensor) -> Tensor {
+                  if scalarMetrics { return x.mean() }
+                  let x = x.reshape([count, x.shape[0] / count] + x.shape[1...])
+                  return x.flatten(startAxis: 1).mean(axis: 1)
+                }
 
-              let subLabelIndices = allLabelIndices.map {
-                $0[i..<(i + curMbSize)].repeating(axis: 0, count: count)
+                let subLabelIndices = allLabelIndices.map {
+                  $0[i..<(i + curMbSize)].repeating(axis: 0, count: count)
+                }
+                let losses = zip(subLabelIndices, rollouts.outputs).map { (labelIdxs, logits) in
+                  means(
+                    logits.logSoftmax(axis: -1).gather(axis: 1, indices: labelIdxs[..., NewAxis()])
+                  )
+                }
+                let accs = zip(subLabelIndices, rollouts.outputs).map { (labelIdxs, logits) in
+                  means((labelIdxs == logits.argmax(axis: 1)).cast(.float32))
+                }
+
+                let meanLoss = -Tensor(stack: losses).mean(axis: 0) * mbScale
+                let meanAcc = Tensor(stack: accs).mean(axis: 0) * mbScale
+                return [.loss: meanLoss, .accuracy: meanAcc]
               }
-              let losses = zip(subLabelIndices, rollouts.outputs).map { (labelIdxs, logits) in
-                means(
-                  logits.logSoftmax(axis: -1).gather(axis: 1, indices: labelIdxs[..., NewAxis()])
-                )
-              }
-              let accs = zip(subLabelIndices, rollouts.outputs).map { (labelIdxs, logits) in
-                means((labelIdxs == logits.argmax(axis: 1)).cast(.float32))
-              }
-              let meanLoss = -Tensor(stack: losses).mean(axis: 0) * mbScale
-              let meanAcc = Tensor(stack: accs).mean(axis: 0) * mbScale
-              return [.loss: meanLoss, .accuracy: meanAcc]
             }
 
             let metrics =
@@ -197,11 +222,7 @@ import MNIST
                 try await {
                   let metrics = computeLosses(scalarMetrics: true)
                   metrics[.loss]!.backward()
-                  // Wait for backward computation before using memory
-                  // for the next microbatch.
-                  if i + curMbSize < batchSize {
-                    for (_, p) in cell.parameters { if let g = p.grad { try await g.wait() } }
-                  }
+                  try await waitForGrads()
                   return metrics.noGrad()
                 }()
               }
@@ -213,11 +234,12 @@ import MNIST
         }
 
         var metrics = try await computeGradients()
-        if let sharpnessClipDelta = sharpnessClipDelta {
-          metrics += try await sharpnessClip(cell: cell, delta: sharpnessClipDelta) {
-            opt.clearGrads()
-            let _ = try await computeGradients()
-          }
+        metrics += try await sharpnessClip(oldMetrics: metrics, cell: cell, opt: opt) {
+          if microbatch != nil { try await waitForGrads() }
+          opt.clearGrads()
+          let result = try await computeGradients()
+          if microbatch != nil { try await waitForGrads() }
+          return result
         }
 
         let (gradNorm, gradScale) = try await clipper.clipGrads(model: cell)
@@ -248,10 +270,12 @@ import MNIST
   }
 
   @recordCaller private func _sharpnessClip(
+    oldMetrics: Metrics,
     cell: TrainableProto,
-    delta: Float,
-    gradCallback: () async throws -> Void
+    opt: Muon,
+    gradCallback: () async throws -> Metrics
   ) async throws -> Metrics {
+    guard let delta = sharpnessClipDelta else { return [:] }
     var oldParams = [Tensor]()
     var oldGrads = [Tensor]()
     var sqSum = Tensor(data: [0.0], shape: [])
@@ -264,10 +288,10 @@ import MNIST
     }
     let scale = (delta / (sqSum.sqrt() + 1e-8))
     for (_, var param) in cell.parameters {
-      if let grad = param.grad, let data = param.data { param.data = data + grad * scale }
+      if let grad = param.grad, let data = param.data { param.data = data - grad * scale }
     }
 
-    try await gradCallback()
+    let newMetrics = try await gradCallback()
 
     var newSqSum = Tensor(data: [0.0], shape: [])
     var gradDot = newSqSum
@@ -280,10 +304,21 @@ import MNIST
       }
     }
 
-    let correlation = gradDot / (sqSum.sqrt() * newSqSum.sqrt() + 1e-8)
-    for (_, var param) in cell.parameters {
-      if let grad = param.grad { param.grad = grad * correlation }
+    let correlation = (gradDot / (sqSum.sqrt() * newSqSum.sqrt() + 1e-8))
+    let lossDelta = (oldMetrics[.loss]! - newMetrics[.loss]!)
+    let correlationItem = try await correlation.item()
+    let lossDeltaItem = try await lossDelta.item()
+    if lossDeltaItem < -sharpnessLossDelta || correlationItem < sharpnessClipThreshold {
+      for (_, var param) in cell.parameters {
+        param.grad = nil
+        if let data = param.data { param.data = data * sharpnessClipDecay }
+      }
+      opt.moments = [:]
+    } else {
+      for (_, var param) in cell.parameters {
+        if let grad = param.grad { param.grad = grad * correlation }
+      }
     }
-    return [.named("sharpness_scale"): correlation]
+    return [.named("sharpness_scale"): correlation, .named("loss_delta"): lossDelta]
   }
 }

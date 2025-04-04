@@ -7,7 +7,8 @@ public class Muon: Optimizer {
   public var momentum: Float
   public var weightDecay: Float
   public var nesterov: Bool
-  public var nsSteps: Int
+  public var nsSteps: Int?
+  public var epsilon: Float
 
   public var moments: [String: Tensor] = [:]
 
@@ -17,14 +18,31 @@ public class Muon: Optimizer {
     momentum: Float = 0.9,
     weightDecay: Float = 0.0,
     nesterov: Bool = true,
-    nsSteps: Int = 5
+    nsSteps: Int? = nil,
+    epsilon: Float = 0.01
   ) {
     self.lr = lr
     self.momentum = momentum
     self.weightDecay = weightDecay
     self.nesterov = nesterov
     self.nsSteps = nsSteps
+    self.epsilon = epsilon
     super.init(parameters)
+  }
+
+  @recordCaller private func _orthogonalize(_ g: Tensor) -> Tensor {
+    if let steps = nsSteps {
+      Muon.newtonSchulz(g, steps: steps)
+    } else {
+      Muon.eigenZeroPower(g, eps: epsilon)
+    }
+  }
+
+  @recordCaller private static func _eigenZeroPower(_ g: Tensor, eps: Float) -> Tensor {
+    #alwaysAssert(g.shape.count == 2, "Only 2D tensors are supported")
+    let (u, sUnscaled, vt) = g.svd(full: false)
+    let s = sUnscaled / sUnscaled.max()
+    return u &* Tensor.diagonal(s / (s < eps).when(isTrue: eps, isFalse: s)) &* vt
   }
 
   @recordCaller static private func _newtonSchulz(_ g: Tensor, steps: Int) -> Tensor {
@@ -53,7 +71,7 @@ public class Muon: Optimizer {
       v = v * momentum + g * (1 - momentum)
       moments[name] = v
       g = if nesterov { g * (1 - momentum) + v * momentum } else { v }
-      g = Muon.newtonSchulz(g, steps: nsSteps)
+      g = orthogonalize(g)
       if weightDecay != 0 { param.data = param.data! * (1 - lr * weightDecay) }
       let lrMult = pow(
         max(1.0, Float(g.shape[g.shape.count - 2]) / Float(g.shape[g.shape.count - 1])),
