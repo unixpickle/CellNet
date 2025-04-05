@@ -1,18 +1,16 @@
 import ArgumentParser
 import CMA
 import CellNet
+import DataUtils
 import Foundation
 import HCBacktrace
 import Honeycrisp
-import MNIST
 
 @main struct Main: AsyncParsableCommand {
-  typealias LossAndAcc = (loss: Tensor, acc: Tensor)
-
   struct State: Codable {
     let model: Trainable.State
     let step: Int?
-    let data: DataIterator.State?
+    let data: MNISTIterator.State?
     let cma: CMA.State?
   }
 
@@ -79,8 +77,7 @@ import MNIST
         initialValue: Tensor(concat: cell.parameters.map { $0.1.data!.flatten() })
       )
 
-      let dataset = try await MNISTDataset.download(toDir: "mnist_data")
-      var dataIt = DataIterator(images: dataset.train, batchSize: batchSize)
+      var dataIt = try await MNISTIterator(batchSize: batchSize)
 
       var step: Int = 0
 
@@ -97,21 +94,7 @@ import MNIST
       }
 
       while true {
-        var allInputs = [Tensor]()
-        var allLabelIndices = [Tensor]()
-        var allLabels = [Tensor]()
-        for _ in 0..<(examplesPerRollout) {
-          let (inputs, labels) = dataIt.next()!
-          allInputs.append(inputs)
-          allLabelIndices.append(labels)
-          allLabels.append(
-            Tensor(ones: [labels.shape[0], 1]).scatter(
-              axis: 1,
-              count: 10,
-              indices: labels[..., NewAxis()]
-            ) * 2 - 1
-          )
-        }
+        let (allInputs, allLabelIndices, allLabels) = dataIt.rollout(count: examplesPerRollout)!
 
         func computeMetrics(params: Tensor? = nil) async throws -> Metrics {
           var allMetrics = [Metrics]()
