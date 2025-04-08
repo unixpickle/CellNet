@@ -188,7 +188,10 @@ import Honeycrisp
 
                 let meanLoss = -Tensor(stack: losses).mean(axis: 0) * mbScale
                 let meanAcc = Tensor(stack: accs).mean(axis: 0) * mbScale
-                return [.loss: meanLoss, .accuracy: meanAcc]
+                return [
+                  .loss: meanLoss, .accuracy: meanAcc, .lastLoss: -losses.last!.noGrad() * mbScale,
+                  .lastAccuracy: accs.last! * mbScale,
+                ]
               }
             }
 

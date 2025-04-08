@@ -7,6 +7,8 @@ public struct Metrics: ExpressibleByDictionaryLiteral, Sequence {
   public enum Key: Hashable {
     case loss
     case accuracy
+    case lastLoss
+    case lastAccuracy
     case gradNorm
     case gradScale
     case named(String)
@@ -15,6 +17,8 @@ public struct Metrics: ExpressibleByDictionaryLiteral, Sequence {
       switch self {
       case .loss: "loss"
       case .accuracy: "acc"
+      case .lastLoss: "last_loss"
+      case .lastAccuracy: "last_acc"
       case .gradNorm: "grad_norm"
       case .gradScale: "grad_scale"
       case .named(let x): x
