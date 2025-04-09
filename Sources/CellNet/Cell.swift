@@ -120,6 +120,7 @@ public class Cell: Trainable {
   public let edgeCount: Int
   public let stateCount: Int
   public let normalization: Normalization
+  public let actScale: Float
 
   @Child(name: "stateProj") public var stateProj: MetaLinear
   @Child(name: "edgeProj") public var edgeProj: MetaLinear
@@ -133,11 +134,13 @@ public class Cell: Trainable {
     stateCount: Int,
     hiddenSize: Int,
     normalization: Normalization = .none,
-    initialization: MetaLinear.Initialization = .xavier
+    initialization: MetaLinear.Initialization = .xavier,
+    actScale: Float = 1.0
   ) {
     self.edgeCount = edgeCount
     self.stateCount = stateCount
     self.normalization = normalization
+    self.actScale = actScale
     super.init()
     self.stateProj = MetaLinear(
       inCount: stateCount,
@@ -194,6 +197,7 @@ public class Cell: Trainable {
     }
     h = h.gelu()
     h = self.layer2(h, weight: params?["layer2.weight"])
+    if actScale != 1 { h = h * actScale }
     h = h.gelu()
     if normalization == .lastLayer {
       h = h.flatten(startAxis: 1).normalize(axis: -1, eps: 1e-5).reshape(h.shape)

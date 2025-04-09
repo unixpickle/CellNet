@@ -16,6 +16,7 @@ import Honeycrisp
   }
 
   // Dataset configuration
+  @Option(name: .long, help: "Dataset source.") var datasetSource: MNISTIterator.Source = .mnist
   @Option(name: .long, help: "Dataset examples per rollout.") var examplesPerRollout: Int = 100
   @Option(name: .long, help: "Number of inference timesteps.") var inferSteps: Int = 5
   @Option(name: .long, help: "Number of update timesteps.") var updateSteps: Int = 5
@@ -28,6 +29,7 @@ import Honeycrisp
   @Option(name: .long, help: "Number of cells.") var cellCount: Int = 1024
   @Option(name: .long, help: "Activations per cell.") var actPerCell: Int = 16
   @Option(name: .long, help: "Normalization mode.") var normalization: Cell.Normalization = .none
+  @Option(name: .long, help: "Activation scale.") var actScale: Float = 1.0
   @Option(name: .long, help: "Initialization scheme.") var initialization:
     MetaLinear.Initialization = .xavier
 
@@ -86,7 +88,8 @@ import Honeycrisp
           stateCount: stateCount,
           hiddenSize: hiddenSize,
           normalization: normalization,
-          initialization: initialization
+          initialization: initialization,
+          actScale: actScale
         )
       )
       func waitForGrads() async throws {
@@ -103,7 +106,7 @@ import Honeycrisp
       )
       let clipper = GradClipper()
 
-      var dataIt = try await MNISTIterator(batchSize: batchSize)
+      var dataIt = try await MNISTIterator(batchSize: batchSize, source: datasetSource)
 
       var step: Int = 0
 

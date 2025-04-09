@@ -1,7 +1,13 @@
+import ArgumentParser
 import Honeycrisp
 import MNIST
 
 public struct MNISTIterator: Sequence, IteratorProtocol {
+  public enum Source: String, ExpressibleByArgument, CaseIterable, Sendable {
+    case mnist
+    case fashionMNIST
+  }
+
   public struct State: Codable {
     public let offset: Int
     public let permutation: [Int]
@@ -26,9 +32,15 @@ public struct MNISTIterator: Sequence, IteratorProtocol {
     permutation = Array(0..<images.count).shuffled()
   }
 
-  public init(batchSize: Int) async throws {
+  public init(batchSize: Int, source: Source = .mnist) async throws {
+    let mnistSource: MNISTDataset.Source =
+      switch source {
+      case .mnist: .mnist
+      case .fashionMNIST: .fashionMNIST
+      }
     self.init(
-      images: try await MNISTDataset.download(toDir: "mnist_data").train,
+      images: try await MNISTDataset.download(toDir: "\(source.rawValue)_data", source: mnistSource)
+        .train,
       batchSize: batchSize
     )
   }

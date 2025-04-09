@@ -14,7 +14,7 @@ let package = Package(
     .package(url: "https://github.com/unixpickle/honeycrisp", from: "0.0.29"),
     .package(url: "https://github.com/unixpickle/swift-cma", from: "0.1.0"),
     .package(url: "https://github.com/apple/swift-argument-parser", from: "1.3.0"),
-    .package(url: "https://github.com/unixpickle/honeycrisp-examples.git", from: "0.0.2"),
+    .package(url: "https://github.com/unixpickle/honeycrisp-examples.git", from: "0.0.4"),
   ],
   targets: [
     .target(
@@ -28,6 +28,7 @@ let package = Package(
     .target(
       name: "DataUtils",
       dependencies: [
+        .product(name: "ArgumentParser", package: "swift-argument-parser"),
         .product(name: "MNIST", package: "honeycrisp-examples"),
         .product(name: "Honeycrisp", package: "honeycrisp"),
         .product(name: "HCBacktrace", package: "honeycrisp"),
