@@ -140,7 +140,6 @@ import Honeycrisp
 
         func computeGradients() async throws -> Metrics {
           var allMetrics = [Metrics]()
-          let actGradClipper = ActGradClipper(maxRMS: maxGradRMS)
           let mbSize = microbatch ?? batchSize
           for i in stride(from: 0, to: batchSize, by: mbSize) {
             let curMbSize = min(batchSize - i, mbSize)
@@ -165,8 +164,7 @@ import Honeycrisp
                 targets: allLabels.map { $0[i..<(i + curMbSize)].repeating(axis: 0, count: count) },
                 cell: cell,
                 graph: graph.repeated(count: count),
-                params: params,
-                clipper: actGradClipper
+                params: params
               )
 
               // Tiny computations are faster on CPU and don't launch a ton of kernels.
@@ -217,9 +215,7 @@ import Honeycrisp
               }
             allMetrics.append(metrics)
           }
-          var metrics = Metrics.sum(allMetrics)
-          metrics += actGradClipper.metrics
-          return metrics
+          return Metrics.sum(allMetrics)
         }
 
         var metrics = try await computeGradients()

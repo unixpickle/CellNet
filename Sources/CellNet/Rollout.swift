@@ -31,8 +31,7 @@ public struct Rollout {
     cell: SyncTrainable<Cell>,
     graph: Graph,
     resetActs: Bool = false,
-    params: [String: Tensor]? = nil,
-    clipper: ActGradClipper? = nil
+    params: [String: Tensor]? = nil
   ) -> Rollout {
     #alwaysAssert(inputs.count == targets.count)
     let batchShape = inputs[0].shape[..<(inputs[0].shape.count - 1)]
@@ -59,8 +58,7 @@ public struct Rollout {
               activations: xs[3],
               cellStates: xs[4]
             ),
-            params: params,
-            clipper: clipper
+            params: params
           )
         }
         return [results.outputs, results.newActs, results.newCellStates]

@@ -170,11 +170,9 @@ public class Cell: Trainable {
     )
   }
 
-  @recordCaller private func _callAsFunction(
-    _ s: NetworkState,
-    params: [String: Tensor]? = nil,
-    clipper: ActGradClipper? = nil
-  ) -> (outputs: Tensor, newActs: Tensor, newCellStates: Tensor) {
+  @recordCaller private func _callAsFunction(_ s: NetworkState, params: [String: Tensor]? = nil)
+    -> (outputs: Tensor, newActs: Tensor, newCellStates: Tensor)
+  {
     let inOut = Tensor(
       concat: [addInnerDimension(s.inputs, size: 1), addInnerDimension(s.targets, size: 1)],
       axis: -1
@@ -205,7 +203,6 @@ public class Cell: Trainable {
       h = h.normalize(axis: 1, eps: 1e-5)
     }
     h = self.layer3(h, weight: params?["layer3.weight"])
-    if let c = clipper { h = c(h) }
 
     let rememberBias = 4 * Tensor(data: (0..<stateCount), dtype: .float32) / stateCount - 2
 
