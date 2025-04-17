@@ -11,7 +11,7 @@ let package = Package(
     .library(name: "DataUtils", targets: ["DataUtils"]),
   ],
   dependencies: [
-    .package(url: "https://github.com/unixpickle/honeycrisp", from: "0.0.29"),
+    .package(url: "https://github.com/unixpickle/honeycrisp", from: "0.0.30"),
     .package(url: "https://github.com/unixpickle/swift-cma", from: "0.1.0"),
     .package(url: "https://github.com/apple/swift-argument-parser", from: "1.3.0"),
     .package(url: "https://github.com/unixpickle/honeycrisp-examples.git", from: "0.0.4"),
