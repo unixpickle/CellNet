@@ -6,6 +6,7 @@ import HCBacktrace
 import Honeycrisp
 
 @main struct Main: AsyncParsableCommand {
+
   struct State: Codable {
     let model: Trainable.State
     let step: Int?
@@ -39,22 +40,6 @@ import Honeycrisp
     Float = 0.01
   @Option(name: .long, help: "Muon momentum.") var momentum: Float = 0.95
   @Option(name: .long, help: "Muon weight decay.") var weightDecay: Float = 0.0
-
-  // Other optimizer hyperparameters
-  @Option(name: .long, help: "Maximum gradient RMS before clipping.") var maxGradRMS: Float = 100.0
-  @Option(
-    name: .long,
-    help:
-      "If specified, step along the gradient (rescaled to this norm) and penalize gradients that change too much"
-  ) var sharpnessClipDelta: Float? = nil
-  @Option(name: .long, help: "Threshold under which to completely clip gradients")
-  var sharpnessClipThreshold: Float = 0.1
-  @Option(name: .long, help: "Parameter decay rate when sharp gradients are clipped")
-  var sharpnessClipDecay: Float = 0.995
-  @Option(
-    name: .long,
-    help: "If the loss gets this much worse during sharpness clipping, clip the gradient to zero"
-  ) var sharpnessLossDelta: Float = 0.01
 
   // Evolutions strategies
   @Option(name: .long, help: "If specified, use Evolution Strategies with this epsilon.")
@@ -219,13 +204,6 @@ import Honeycrisp
         }
 
         var metrics = try await computeGradients()
-        metrics += try await sharpnessClip(oldMetrics: metrics, cell: cell, opt: opt) {
-          if microbatch != nil { try await waitForGrads() }
-          opt.clearGrads()
-          let result = try await computeGradients()
-          if microbatch != nil { try await waitForGrads() }
-          return result
-        }
 
         let (gradNorm, gradScale) = try await clipper.clipGrads(model: cell)
 
@@ -254,56 +232,4 @@ import Honeycrisp
     } catch { print("FATAL ERROR: \(error)") }
   }
 
-  @recordCaller private func _sharpnessClip(
-    oldMetrics: Metrics,
-    cell: TrainableProto,
-    opt: Muon,
-    gradCallback: () async throws -> Metrics
-  ) async throws -> Metrics {
-    guard let delta = sharpnessClipDelta else { return [:] }
-    var oldParams = [Tensor]()
-    var oldGrads = [Tensor]()
-    var sqSum = Tensor(data: [0.0], shape: [])
-    for (_, param) in cell.parameters {
-      if let data = param.data, let grad = param.grad {
-        oldParams.append(data)
-        oldGrads.append(grad)
-        sqSum = sqSum + grad.pow(2).sum()
-      }
-    }
-    let scale = (delta / (sqSum.sqrt() + 1e-8))
-    for (_, var param) in cell.parameters {
-      if let grad = param.grad, let data = param.data { param.data = data - grad * scale }
-    }
-
-    let newMetrics = try await gradCallback()
-
-    var newSqSum = Tensor(data: [0.0], shape: [])
-    var gradDot = newSqSum
-    for (_, var param) in cell.parameters {
-      if let newGrad = param.grad {
-        param.grad = oldGrads.removeFirst()
-        newSqSum = newSqSum + newGrad.pow(2).sum()
-        gradDot = gradDot + (newGrad * param.grad!).sum()
-        param.data = oldParams.removeFirst()
-      }
-    }
-
-    let correlation = (gradDot / (sqSum.sqrt() * newSqSum.sqrt() + 1e-8))
-    let lossDelta = (oldMetrics[.loss]! - newMetrics[.loss]!)
-    let correlationItem = try await correlation.item()
-    let lossDeltaItem = try await lossDelta.item()
-    if lossDeltaItem < -sharpnessLossDelta || correlationItem < sharpnessClipThreshold {
-      for (_, var param) in cell.parameters {
-        param.grad = nil
-        if let data = param.data { param.data = data * sharpnessClipDecay }
-      }
-      opt.moments = [:]
-    } else {
-      for (_, var param) in cell.parameters {
-        if let grad = param.grad { param.grad = grad * correlation }
-      }
-    }
-    return [.named("sharpness_scale"): correlation, .named("loss_delta"): lossDelta]
-  }
 }
