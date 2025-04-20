@@ -33,6 +33,12 @@ import Honeycrisp
   @Option(name: .long, help: "Initialization scheme.") var initialization:
     MetaLinear.Initialization = .xavier
 
+  // Hyperparameters for activation noise consistency loss.
+  @Option(name: .long, help: "If specified, use an activation noise consistency objective.")
+  var actNoiseStd: Float? = nil
+  @Option(name: .long, help: "The weight to put on the activation noise MSE objective.")
+  var actNoiseLoss: Float = 0.01
+
   // Muon hyperparams
   @Option(name: .shortAndLong, help: "Learning rate.") var lr: Float = 0.01
   @Option(name: .shortAndLong, help: "Minimum eigenvalue to rescale in Muon.") var muonEpsilon:
@@ -132,7 +138,8 @@ import Honeycrisp
                 targets: allLabels.map { $0[i..<(i + curMbSize)].repeating(axis: 0, count: count) },
                 cell: cell,
                 graph: graph.repeated(count: count),
-                params: params
+                params: params,
+                noiseStd: actNoiseStd
               )
 
               // Tiny computations are faster on CPU and don't launch a ton of kernels.
@@ -157,22 +164,33 @@ import Honeycrisp
 
                 let meanLoss = -Tensor(stack: losses).mean(axis: 0) * mbScale
                 let meanAcc = Tensor(stack: accs).mean(axis: 0) * mbScale
-                return [
-                  .loss: meanLoss, .accuracy: meanAcc, .lastLoss: -losses.last!.noGrad() * mbScale,
-                  .lastAccuracy: accs.last! * mbScale,
+
+                var result: Metrics = [
+                  .loss: meanLoss, .totalLoss: meanLoss, .accuracy: meanAcc,
+                  .lastLoss: -losses.last!.noGrad() * mbScale, .lastAccuracy: accs.last! * mbScale,
                 ]
+
+                if let noises = rollouts.noisedMSE {
+                  result[.actNoisedMSE] = Tensor(stack: noises, axis: 1).mean() * mbScale
+                  result[.totalLoss] =
+                    result[.totalLoss]! + result[.actNoisedMSE]! * actNoiseLoss
+                }
+
+                return result
               }
             }
 
             let metrics =
               if let es = es, let esNoise = esNoise {
-                try await es.forwardBackward(noises: esNoise, batchSize: esBatchSize) { x, y in
-                  computeLosses(count: x, params: y)
-                }
+                try await es.forwardBackward(
+                  noises: esNoise,
+                  metric: .totalLoss,
+                  batchSize: esBatchSize
+                ) { x, y in computeLosses(count: x, params: y) }
               } else {
                 try await {
                   let metrics = computeLosses(scalarMetrics: true)
-                  metrics[.loss]!.backward()
+                  metrics[.totalLoss]!.backward()
                   try await waitForGrads()
                   return metrics.noGrad()
                 }()

@@ -39,6 +39,32 @@ public struct NetworkState: Sendable {
       cellStates: cellStates ?? self.cellStates
     )
   }
+
+  public func withNoise(std: Float) -> NetworkState {
+    let prevActStd = prevActivations.variance(axis: 1, keepdims: true).sqrt() * std
+    let actStd = activations.variance(axis: 1, keepdims: true).sqrt() * std
+    let cellStateStd = cellStates.variance(axis: 1, keepdims: true).sqrt() * std
+    return with(
+      prevActivations: prevActivations + Tensor(randnLike: prevActivations) * prevActStd,
+      activations: activations + Tensor(randnLike: activations) * actStd,
+      cellStates: cellStates + Tensor(randnLike: cellStates) * cellStateStd
+    )
+  }
+
+  public func normalizedMSE(to other: NetworkState) -> Tensor {
+    let diffSqs = zip(
+      [prevActivations, activations, cellStates],
+      [other.prevActivations, other.activations, other.cellStates]
+    ).map { xy in
+      let (x, y) = xy
+      let xMean = x.mean(axis: 1, keepdims: true)
+      let xStd = x.variance(axis: 1, keepdims: true).sqrt()
+      let normedX = (x - xMean) / xStd
+      let normedY = (y - xMean) / xStd
+      return (normedX - normedY).pow(2).flatten(startAxis: 1).mean(axis: 1)
+    }
+    return Tensor(stack: diffSqs).mean(axis: 0)
+  }
 }
 
 public class MetaLinear: Trainable {
