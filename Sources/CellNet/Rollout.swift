@@ -9,22 +9,18 @@ public struct Rollout {
   public let targets: [Tensor]
   public let outputs: [Tensor]
 
-  public let noisedMSE: [Tensor]?
-
   public init(
     inferSteps: Int,
     updateSteps: Int,
     inputs: [Tensor],
     targets: [Tensor],
-    outputs: [Tensor],
-    noisedMSE: [Tensor]? = nil
+    outputs: [Tensor]
   ) {
     self.inferSteps = inferSteps
     self.updateSteps = updateSteps
     self.inputs = inputs
     self.targets = targets
     self.outputs = outputs
-    self.noisedMSE = noisedMSE
   }
 
   @recordCaller private static func _rollout(
@@ -35,8 +31,7 @@ public struct Rollout {
     cell: SyncTrainable<Cell>,
     graph: Graph,
     resetActs: Bool = false,
-    params: [String: Tensor]? = nil,
-    noiseStd: Float? = nil
+    params: [String: Tensor]? = nil
   ) -> Rollout {
     #alwaysAssert(inputs.count == targets.count)
     let batchShape = inputs[0].shape[..<(inputs[0].shape.count - 1)]
@@ -79,7 +74,6 @@ public struct Rollout {
     }
 
     var outputs = [Tensor]()
-    var noisedMSEs = [Tensor]()
     for (i, (input, target)) in zip(inputs, targets).enumerated() {
       if i > 0 && resetActs {
         state = state.with(
@@ -90,11 +84,6 @@ public struct Rollout {
       state = state.with(inputs: graph.populateInputs(inputs: input))
       for step in 0..<inferSteps {
         let out = checkpointedCell(state)
-        if let std = noiseStd {
-          noisedMSEs.append(
-            checkpointedCell(state.withNoise(std: std)).state.normalizedMSE(to: out.state)
-          )
-        }
         state = out.state
         if step + 1 == inferSteps { outputs.append(graph.gatherOutputs(outputs: out.outputs)) }
         state = state.with(activations: graph.stepOutToStepIn(activations: state.activations))
@@ -105,11 +94,6 @@ public struct Rollout {
 
       for _ in 0..<updateSteps {
         let newState = checkpointedCell(state).state
-        if let std = noiseStd {
-          noisedMSEs.append(
-            checkpointedCell(state.withNoise(std: std)).state.normalizedMSE(to: newState)
-          )
-        }
         state = newState.with(activations: graph.stepOutToStepIn(activations: state.activations))
       }
     }
@@ -119,8 +103,7 @@ public struct Rollout {
       updateSteps: updateSteps,
       inputs: inputs,
       targets: targets,
-      outputs: outputs,
-      noisedMSE: (noiseStd == nil ? nil : noisedMSEs)
+      outputs: outputs
     )
   }
 }
