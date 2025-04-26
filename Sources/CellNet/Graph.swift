@@ -1,7 +1,13 @@
+import ArgumentParser
 import HCBacktrace
 import Honeycrisp
 
 public struct Graph: Sendable {
+  public enum RandomKind: String, ExpressibleByArgument, CaseIterable, Sendable {
+    case permutation
+    case spatial
+  }
+
   public let cellCount: Int
   public let actPerCell: Int
   public let inCount: Int
@@ -26,15 +32,39 @@ public struct Graph: Sendable {
     cellCount: Int,
     actPerCell: Int,
     inCount: Int,
+    outCount: Int,
+    kind: RandomKind = .permutation
+  ) async throws -> Graph {
+    switch kind {
+    case .permutation:
+      randomPermutation(
+        batchSize: batchSize,
+        cellCount: cellCount,
+        actPerCell: actPerCell,
+        inCount: inCount,
+        outCount: outCount
+      )
+    case .spatial:
+      try await randomSpatial(
+        batchSize: batchSize,
+        cellCount: cellCount,
+        actPerCell: actPerCell,
+        inCount: inCount,
+        outCount: outCount
+      )
+    }
+  }
+
+  @recordCaller private static func _randomPermutation(
+    batchSize: Int,
+    cellCount: Int,
+    actPerCell: Int,
+    inCount: Int,
     outCount: Int
   ) -> Graph {
     #alwaysAssert(
       cellCount >= inCount + outCount,
       "number of cells \(cellCount) must exceed inCount + outCount, which is \(inCount)+\(outCount) = \(inCount + outCount)"
-    )
-    #alwaysAssert(
-      actPerCell >= 2,
-      "must have at least two activations per cell: one for inputs, one for targets"
     )
 
     var allGraphPerm = [Tensor]()
@@ -55,6 +85,52 @@ public struct Graph: Sendable {
       cellCount: cellCount,
       actPerCell: actPerCell,
       graphPerm: Tensor(stack: allGraphPerm),
+      inCount: inCount,
+      outCount: outCount
+    )
+  }
+
+  @recordCaller private static func _randomSpatial(
+    batchSize: Int,
+    cellCount: Int,
+    actPerCell: Int,
+    inCount: Int,
+    outCount: Int,
+    spaceDims: Int = 3
+  ) async throws -> Graph {
+    #alwaysAssert(
+      cellCount >= inCount + outCount,
+      "number of cells \(cellCount) must exceed inCount + outCount, which is \(inCount)+\(outCount) = \(inCount + outCount)"
+    )
+
+    var allGraphPerm = [Int]()
+
+    for _ in 0..<batchSize {
+      let coords = Tensor(randn: [cellCount, spaceDims])
+      let pairwiseDists = (coords.unsqueeze(axis: 0) - coords).pow(2).sum(axis: -1)
+      let sortedIndices = try await pairwiseDists.argsort(axis: 1).ints()
+
+      var graphPerm = [Int](repeating: 0, count: cellCount * actPerCell)
+      for actIdx in 0..<actPerCell {
+        var hasInput = [Bool](repeating: false, count: cellCount)
+        for cellIdx in Array(0..<cellCount).shuffled() {
+          let neighbors = sortedIndices[(cellCount * cellIdx)..<(cellCount * (cellIdx + 1))]
+          for neighbor in neighbors[1...] {
+            if !hasInput[neighbor] {
+              graphPerm[cellIdx * actPerCell + actIdx] = neighbor * actPerCell + actIdx
+              hasInput[neighbor] = true
+              break
+            }
+          }
+        }
+      }
+      allGraphPerm.append(contentsOf: graphPerm)
+    }
+
+    return Graph(
+      cellCount: cellCount,
+      actPerCell: actPerCell,
+      graphPerm: Tensor(data: allGraphPerm, dtype: .int64).reshape([batchSize, -1]),
       inCount: inCount,
       outCount: outCount
     )

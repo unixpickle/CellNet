@@ -102,7 +102,7 @@ import Honeycrisp
           for i in stride(from: 0, to: batchSize, by: mbSize) {
             let curMbSize = min(batchSize - i, mbSize)
             let mbScale = Float(curMbSize) / Float(batchSize)
-            let graph = Graph.random(
+            let graph = try await Graph.random(
               batchSize: curMbSize,
               cellCount: cellCount,
               actPerCell: actPerCell,

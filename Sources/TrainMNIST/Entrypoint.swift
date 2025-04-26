@@ -32,6 +32,8 @@ import Honeycrisp
   @Option(name: .long, help: "Activation scale.") var actScale: Float = 1.0
   @Option(name: .long, help: "Initialization scheme.") var initialization:
     MetaLinear.Initialization = .xavier
+  @Option(name: .long, help: "Graph randomization type.") var graphRandomization: Graph.RandomKind =
+    .permutation
 
   // Muon hyperparams
   @Option(name: .shortAndLong, help: "Learning rate.") var lr: Float = 0.01
@@ -112,12 +114,13 @@ import Honeycrisp
           for i in stride(from: 0, to: batchSize, by: mbSize) {
             let curMbSize = min(batchSize - i, mbSize)
             let mbScale = Float(curMbSize) / Float(batchSize)
-            let graph = Graph.random(
+            let graph = try await Graph.random(
               batchSize: curMbSize,
               cellCount: cellCount,
               actPerCell: actPerCell,
               inCount: 28 * 28,
-              outCount: 10
+              outCount: 10,
+              kind: graphRandomization
             )
 
             func computeLosses(

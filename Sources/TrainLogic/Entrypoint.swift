@@ -33,7 +33,7 @@ import Honeycrisp
 
       var step: Int = 0
       for (allInputs, allLabelIndices) in dataIt {
-        let graph = Graph.random(
+        let graph = try await Graph.random(
           batchSize: batchSize,
           cellCount: cellCount,
           actPerCell: actPerCell,
