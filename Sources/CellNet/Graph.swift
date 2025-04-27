@@ -67,24 +67,14 @@ public struct Graph: Sendable {
       "number of cells \(cellCount) must exceed inCount + outCount, which is \(inCount)+\(outCount) = \(inCount + outCount)"
     )
 
-    var allGraphPerm = [Tensor]()
-
-    for _ in 0..<batchSize {
-      var graphPerm = [Int](repeating: 0, count: cellCount * actPerCell)
-      for i in 0..<actPerCell {
-        var permForTerminal = Array(0..<cellCount)
-        permForTerminal.shuffle()
-        for (j, k) in permForTerminal.enumerated() {
-          graphPerm[j * actPerCell + i] = k * actPerCell + i
-        }
-      }
-      allGraphPerm.append(Tensor(data: graphPerm, dtype: .int64))
-    }
+    let allPerms =
+      Tensor(rand: [batchSize, cellCount, actPerCell]).argsort(axis: 1) * actPerCell
+      + Tensor(data: 0..<actPerCell)
 
     return Graph(
       cellCount: cellCount,
       actPerCell: actPerCell,
-      graphPerm: Tensor(stack: allGraphPerm),
+      graphPerm: allPerms.flatten(startAxis: 1),
       inCount: inCount,
       outCount: outCount
     )
