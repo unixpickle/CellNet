@@ -107,7 +107,7 @@ public struct Graph: Sendable {
 
     for _ in 0..<batchSize {
       let coords = Tensor(randn: [cellCount, spaceDims])
-      let pairwiseDists = (coords.unsqueeze(axis: 0) - coords).pow(2).sum(axis: -1)
+      let pairwiseDists = (coords.unsqueeze(axis: 1) - coords).pow(2).sum(axis: -1)
       let sortedIndices = try await pairwiseDists.argsort(axis: 1).ints()
 
       var graphPerm = [Int](repeating: 0, count: cellCount * actPerCell)
@@ -115,7 +115,7 @@ public struct Graph: Sendable {
         var hasInput = [Bool](repeating: false, count: cellCount)
         for cellIdx in Array(0..<cellCount).shuffled() {
           let neighbors = sortedIndices[(cellCount * cellIdx)..<(cellCount * (cellIdx + 1))]
-          for neighbor in neighbors[1...] {
+          for neighbor in neighbors.makeIterator().dropFirst() {
             if !hasInput[neighbor] {
               graphPerm[cellIdx * actPerCell + actIdx] = neighbor * actPerCell + actIdx
               hasInput[neighbor] = true
