@@ -6,6 +6,7 @@ public struct Graph: Sendable {
   public enum RandomKind: String, ExpressibleByArgument, CaseIterable, Sendable {
     case permutation
     case spatial
+    case spatialUnique
   }
 
   public let cellCount: Int
@@ -44,13 +45,14 @@ public struct Graph: Sendable {
         inCount: inCount,
         outCount: outCount
       )
-    case .spatial:
+    case .spatial, .spatialUnique:
       try await randomSpatial(
         batchSize: batchSize,
         cellCount: cellCount,
         actPerCell: actPerCell,
         inCount: inCount,
-        outCount: outCount
+        outCount: outCount,
+        unique: kind == .spatialUnique
       )
     }
   }
@@ -86,6 +88,7 @@ public struct Graph: Sendable {
     actPerCell: Int,
     inCount: Int,
     outCount: Int,
+    unique: Bool,
     spaceDims: Int = 3
   ) async throws -> Graph {
     #alwaysAssert(
@@ -101,16 +104,24 @@ public struct Graph: Sendable {
       let sortedIndices = try await pairwiseDists.argsort(axis: 1).ints()
 
       var graphPerm = [Int](repeating: 0, count: cellCount * actPerCell)
+
+      // Used to avoid multiple connections to the same neighbor for each cell
+      // if unique is true.
+      var usedNeighbors = [Set<Int>](repeating: .init(), count: cellCount)
+
       for actIdx in 0..<actPerCell {
         var hasInput = [Bool](repeating: false, count: cellCount)
         for cellIdx in Array(0..<cellCount).shuffled() {
           let neighbors = sortedIndices[(cellCount * cellIdx)..<(cellCount * (cellIdx + 1))]
           for neighbor in neighbors.makeIterator().dropFirst() {
-            if !hasInput[neighbor] {
-              graphPerm[cellIdx * actPerCell + actIdx] = neighbor * actPerCell + actIdx
-              hasInput[neighbor] = true
-              break
+            if hasInput[neighbor] { continue }
+            if unique {
+              if usedNeighbors[cellIdx].contains(neighbor) { continue }
+              usedNeighbors[cellIdx].insert(neighbor)
             }
+            graphPerm[cellIdx * actPerCell + actIdx] = neighbor * actPerCell + actIdx
+            hasInput[neighbor] = true
+            break
           }
         }
       }
